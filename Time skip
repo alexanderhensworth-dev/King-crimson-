@@ -1,0 +1,132 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+-- // Configuration
+local DISTANCE = 20
+local GHOST_DURATION = 0.35
+local SOUND_ID = "rbxassetid://123891403807633"
+local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_005901_0000-removebg-preview.png"
+local FILE_NAME = "DodgeIcon.png"
+local AFTERIMAGE_COLOR = Color3.fromRGB(255, 0, 0)
+
+-- // Asset Handling
+local function getAsset()
+    if not isfile(FILE_NAME) then
+        local success, result = pcall(function() return game:HttpGet(IMAGE_URL) end)
+        if success then writefile(FILE_NAME, result) end
+    end
+    return getcustomasset(FILE_NAME)
+end
+
+-- // UI Creation
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TeleportGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local imageButton = Instance.new("ImageButton")
+imageButton.Name = "DodgeButton"
+imageButton.Size = UDim2.new(0, 80, 0, 80)
+imageButton.Position = UDim2.new(0.85, 0, 0.75, 0)
+imageButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+imageButton.BackgroundTransparency = 0.3
+imageButton.Image = getAsset()
+imageButton.ScaleType = Enum.ScaleType.Fit
+imageButton.BorderSizePixel = 0
+imageButton.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(1, 0)
+uiCorner.Parent = imageButton
+
+-- // Draggable Logic
+local dragging, dragInput, dragStart, startPos
+
+local function update(input)
+	local delta = input.Position - dragStart
+	imageButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+imageButton.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = imageButton.Position
+		
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+imageButton.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		update(input)
+	end
+end)
+
+-- // Teleport & VFX Functions
+local function playDashSound()
+	local sound = Instance.new("Sound")
+	sound.SoundId = SOUND_ID
+	sound.Volume = 1
+	sound.Parent = rootPart
+	sound:Play()
+	sound.Ended:Connect(function() sound:Destroy() end)
+end
+
+local function createAfterImage(sourceChar)
+	sourceChar.Archivable = true
+	local clone = sourceChar:Clone()
+	sourceChar.Archivable = false
+	
+	for _, obj in ipairs(clone:GetDescendants()) do
+		if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("Sound") then
+			obj:Destroy()
+		elseif obj:IsA("BasePart") then
+			obj.Anchored = true
+			obj.CanCollide = false
+			obj.Material = Enum.Material.ForceField
+			obj.Color = AFTERIMAGE_COLOR
+		elseif obj:IsA("Humanoid") then
+			obj.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+		end
+	end
+	
+	clone.Parent = workspace
+	for _, obj in ipairs(clone:GetDescendants()) do
+		if obj:IsA("BasePart") or obj:IsA("Decal") then
+			TweenService:Create(obj, TweenInfo.new(GHOST_DURATION), {Transparency = 1}):Play()
+		end
+	end
+	task.delay(GHOST_DURATION, function() clone:Destroy() end)
+end
+
+-- // Trigger
+imageButton.Activated:Connect(function()
+	-- Activated only fires if it wasn't a long drag
+	playDashSound()
+	createAfterImage(character)
+	
+	local forwardVector = rootPart.CFrame.LookVector
+	rootPart.CFrame = rootPart.CFrame + (forwardVector * DISTANCE)
+	
+	-- Small bounce effect
+	imageButton:TweenSize(UDim2.new(0, 70, 0, 70), "Out", "Quad", 0.1, true)
+	task.delay(0.1, function()
+		imageButton:TweenSize(UDim2.new(0, 80, 0, 80), "Out", "Quad", 0.1, true)
+	end)
+end)
