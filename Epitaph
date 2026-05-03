@@ -11,7 +11,7 @@ local humanoid = character:WaitForChild("Humanoid")
 -- Configuration
 local DETECTION_RADIUS = 50
 local DODGE_DISTANCE = 14
-local MIN_SPEED = 3
+local MIN_SPEED = 12 -- Ignores slow moving aura parts
 local ANIM_ID = "rbxassetid://119594034834137"
 local SOUND_ID = "rbxassetid://123891403807633"
 local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_005629_0000-removebg-preview.png"
@@ -42,55 +42,35 @@ imageButton.Image = getcustomasset(FILE_NAME)
 local uiCorner = Instance.new("UICorner", imageButton)
 uiCorner.CornerRadius = UDim.new(1, 0)
 
------------------------------------------------------------
--- SMOOTH DRAGGING SYSTEM
------------------------------------------------------------
+-- Smooth Dragging System
 local dragging, dragInput, dragStart, startPos
-
 local function update(input)
     local delta = input.Position - dragStart
     imageButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
-
 imageButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = imageButton.Position
-        
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
+        dragging, dragStart, startPos = true, input.Position, imageButton.Position
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
     end
 end)
+imageButton.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end end)
+UserInputService.InputChanged:Connect(function(input) if input == dragInput and dragging then update(input) end end)
 
-imageButton.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-        dragInput = input
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        update(input)
-    end
-end)
-
------------------------------------------------------------
--- TOGGLE & DODGE SYSTEM
------------------------------------------------------------
+-- Toggle Logic
 imageButton.MouseButton1Click:Connect(function()
     if not isActive then
         isActive = true
-        imageButton.ImageColor3 = Color3.fromRGB(255, 100, 100) -- Red visual for active
+        imageButton.ImageColor3 = Color3.fromRGB(255, 100, 100)
         task.wait(10)
         isActive = false
-        imageButton.ImageColor3 = Color3.fromRGB(255, 255, 255) -- Reset
+        imageButton.ImageColor3 = Color3.fromRGB(255, 255, 255)
     end
 end)
 
+-----------------------------------------------------------
+-- VISUALS & SOUND
+-----------------------------------------------------------
 local function playDodgeSound()
     local sound = Instance.new("Sound", rootPart)
     sound.SoundId = SOUND_ID
@@ -103,13 +83,11 @@ end
 local function createAfterImage()
     local folder = Instance.new("Folder", workspace)
     folder.Name = "DodgeGhost"
-    
     for _, part in ipairs(character:GetDescendants()) do
         if part:IsA("BasePart") and part.Transparency < 1 and part.Name ~= "HumanoidRootPart" then
             local ghost = Instance.new("Part")
             ghost.Size, ghost.CFrame, ghost.Anchored, ghost.CanCollide = part.Size, part.CFrame, true, false
             ghost.Material, ghost.Color, ghost.Parent = Enum.Material.ForceField, Color3.fromRGB(255, 0, 0), folder
-            
             local m = part:FindFirstChildOfClass("SpecialMesh") or part:FindFirstChildOfClass("Mesh")
             if m then m:Clone().Parent = ghost end
             TweenService:Create(ghost, TweenInfo.new(0.5), {Transparency = 1}):Play()
@@ -130,48 +108,69 @@ local function playDodgeAnim(side)
     track.TimePosition = (side == -1) and 0.45 or 0.7
     track:AdjustSpeed(1)
     task.delay(0.35, function() if currentTrack == track then track:Stop(0.1) end end)
-    anim:Destroy()
 end
 
+-----------------------------------------------------------
+-- CORE ENGINE
+-----------------------------------------------------------
 RunService.Heartbeat:Connect(function(dt)
     if not isActive or not rootPart or humanoid.Health <= 0 then return end
     local myPos = rootPart.Position
 
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") and not obj:IsDescendantOf(character) then
+            
+            -- RIGID IGNORE FILTER (Stand & Aura Protection)
+            if obj.Name == "StandAura" or obj.Name == "KingCrimson" or 
+               obj:FindFirstAncestor("StandAura") or obj:FindFirstAncestor("KingCrimson") then
+                continue
+            end
+
             local dist = (myPos - obj.Position).Magnitude
             if dist < DETECTION_RADIUS then
-                -- Velocity check
                 local bv = obj:FindFirstChildOfClass("BodyVelocity") or obj:FindFirstChildOfClass("LinearVelocity")
                 local vel = bv and (bv:IsA("BodyVelocity") and bv.Velocity or bv.VectorVelocity) or obj.Velocity
                 
-                if vel.Magnitude < 0.1 then -- Manual calculation for anchored/tweened parts
+                if vel.Magnitude < 0.1 then
                     local last = posHistory[obj] or obj.Position
                     posHistory[obj] = obj.Position
                     vel = (obj.Position - last) / dt
                 end
 
+                -- Threat Validation
                 if vel.Magnitude > MIN_SPEED and obj ~= lastDodgeObject then
                     local relativePos = myPos - obj.Position
                     local projection = relativePos:Dot(vel.Unit)
                     local nearestPointOnPath = obj.Position + (vel.Unit * projection)
                     
-                    if (myPos - nearestPointOnPath).Magnitude < 10 and projection > 0 then
-                        lastDodgeObject = obj
-                        local side = math.random(0, 1) == 0 and -1 or 1
-                        
-                        task.spawn(playDodgeSound)
-                        task.spawn(createAfterImage)
-                        task.spawn(playDodgeAnim, side)
-                        
-                        local rightVector = Vector3.new(-vel.Unit.Z, 0, vel.Unit.X).Unit
-                        rootPart.CFrame = rootPart.CFrame + (rightVector * side * DODGE_DISTANCE)
+                    if (myPos - nearestPointOnPath).Magnitude < 8 and projection > 0 then
+                        if vel.Unit:Dot((myPos - obj.Position).Unit) > 0.8 then
+                            
+                            lastDodgeObject = obj
+                            local side = math.random(0, 1) == 0 and -1 or 1
+                            
+                            task.spawn(playDodgeSound)
+                            task.spawn(createAfterImage)
+                            task.spawn(playDodgeAnim, side)
+                            
+                            local rightVector = Vector3.new(-vel.Unit.Z, 0, vel.Unit.X).Unit
+                            rootPart.CFrame = rootPart.CFrame + (rightVector * side * DODGE_DISTANCE)
 
-                        task.delay(0.1, function() if lastDodgeObject == obj then lastDodgeObject = nil end end)
-                        break
+                            task.delay(0.15, function() 
+                                if lastDodgeObject == obj then lastDodgeObject = nil end 
+                            end)
+                            break
+                        end
                     end
                 end
             end
         end
+    end
+end)
+
+-- Memory Optimization
+task.spawn(function()
+    while task.wait(5) do
+        for obj in pairs(posHistory) do if not obj or not obj.Parent then posHistory[obj] = nil end end
     end
 end)
