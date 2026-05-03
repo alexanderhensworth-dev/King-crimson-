@@ -1,8 +1,8 @@
 --[[
-    KING CRIMSON - AUDIO RESET VERSION
-    - Resetting/Dying now triggers full audio on the next summon
+    KING CRIMSON - DRAG FIX & AUDIO RESET
+    - Fixed Draggable Button logic (Added Touch support + robust Delta)
+    - Resetting/Dying triggers full audio on next summon
     - Repeat summons (while alive) play for 1.32s
-    - 93ms high-precision summon delay
     - Camera-parented (No player anchoring)
 ]]
 
@@ -17,9 +17,7 @@ local function InitializeKC(character)
     local rootPart = character:WaitForChild("HumanoidRootPart")
     local humanoid = character:WaitForChild("Humanoid")
     
-    -- This resets to true every time you respawn
     local isFirstSummonThisLife = true
-    
     local stand = nil
     local ignoredParts = {}
     local auraParticles = {} 
@@ -30,7 +28,7 @@ local function InitializeKC(character)
     -------------------------------------------------------------------
     -- 1. ASSETS
     -------------------------------------------------------------------
-    local audioName = "KC_Final_Sync_v3.mp3"
+    local audioName = "KC_Final_Sync_v4.mp3"
     local audioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/YTDown_Shorts_King-Crimson-anime-animeedit-amv-animeam_Media_jkFrDUvyVcc_008_128k.mp3"
     local imageName = "KC_Icon_Final_Ghost.png"
     local imageUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_010006_0000-removebg-preview.png"
@@ -112,10 +110,10 @@ local function InitializeKC(character)
     CreateStand()
 
     -------------------------------------------------------------------
-    -- 3. UI & RESETTABLE AUDIO SYNC
+    -- 3. FIXED DRAGGABLE UI
     -------------------------------------------------------------------
     local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
-    screenGui.Name = "KC_AUDIO_RESET_GUI"
+    screenGui.Name = "KC_FIXED_GUI"
     screenGui.ResetOnSpawn = true
 
     local imgBtn = Instance.new("ImageButton", screenGui)
@@ -124,23 +122,41 @@ local function InitializeKC(character)
     imgBtn.Image = imageAsset
     imgBtn.BackgroundTransparency = 1
 
-    -- Drag Logic
-    local dragging, dragStart, startPos
+    local dragging = false
+    local dragInput, dragStart, startPos
+
+    local function update(input)
+        local delta = input.Position - dragStart
+        imgBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+
     imgBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true dragStart = input.Position startPos = imgBtn.Position
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+            dragging = true
+            dragStart = input.Position
+            startPos = imgBtn.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
         end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local delta = input.Position - dragStart
-            imgBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
     end)
 
+    imgBtn.InputChanged:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end)
+
+    -- THE SUMMON LOGIC
     imgBtn.MouseButton1Click:Connect(function()
         if not isSummoned then
             summonSound:Play()
@@ -151,12 +167,10 @@ local function InitializeKC(character)
             for _, p in ipairs(auraParticles) do p.Enabled = true end
             
             if not isFirstSummonThisLife then
-                -- Repeated summon: cut at 1.32s
                 task.delay(1.32, function() 
                     if isSummoned then summonSound:Stop() end 
                 end)
             else
-                -- First summon after spawn: Play full audio
                 isFirstSummonThisLife = false
             end
         else
