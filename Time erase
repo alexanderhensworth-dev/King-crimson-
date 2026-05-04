@@ -57,183 +57,70 @@ UserInputService.InputChanged:Connect(function(input)
     if input == dragInput and dragging then update(input) end
 end)
 
--- 🎬 THE ORIGINAL SCRIPT (Nested in click event)
+-- 🎬 THE MAIN SCRIPT
 activateBtn.MouseButton1Click:Connect(function()
-    -- Guard to prevent overlapping executions
     if player.PlayerGui:FindFirstChild("GalaxyTransition") then return end
 
-    -- Save original camera mode for fix
     local originalOcclusion = player.DevCameraOcclusionMode
+    local originalMaxZoom = player.CameraMaxZoomDistance
 
-    -- 🎵 AUDIO SETUP
+    -- 🎵 AUDIO
     local audioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/YTDown-Shorts-King-Crimson-Times.MP3"
     local audioFile = "kc_time_erase.mp3"
     if not isfile(audioFile) then writefile(audioFile, game:HttpGet(audioUrl)) end
     local audioAsset = getcustomasset(audioFile)
 
-    local sound = Instance.new("Sound")
+    local sound = Instance.new("Sound", game:GetService("SoundService"))
     sound.SoundId = audioAsset
     sound.Volume = 2
-    sound.Parent = game:GetService("SoundService")
 
     -- GUI SETUP
-    local gui = Instance.new("ScreenGui")  
+    local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
     gui.IgnoreGuiInset = true  
     gui.Name = "GalaxyTransition"
-    gui.Parent = player:WaitForChild("PlayerGui")  
 
-    -- 🌑 TRANSITION MASK
-    local mask = Instance.new("Frame")
+    local mask = Instance.new("Frame", gui)
     mask.AnchorPoint = Vector2.new(0.5, 0.5)
     mask.Position = UDim2.fromScale(0.5, 0.5)
     mask.Size = UDim2.fromOffset(0, 0) 
     mask.BackgroundColor3 = Color3.new(0,0,0)
     mask.BorderSizePixel = 0
     mask.ClipsDescendants = true
-    mask.Parent = gui
+    Instance.new("UICorner", mask).CornerRadius = UDim.new(1, 0)
 
-    local maskCorner = Instance.new("UICorner")
-    maskCorner.CornerRadius = UDim.new(1, 0)
-    maskCorner.Parent = mask
-
-    -- VIEWPORT SETUP
-    local viewport = Instance.new("ViewportFrame")  
+    local viewport = Instance.new("ViewportFrame", mask)
     viewport.Size = UDim2.fromScale(1, 1)  
     viewport.BackgroundTransparency = 1  
-    viewport.Parent = mask  
-
     viewport.Ambient = Color3.fromRGB(40, 0, 60)
     viewport.LightColor = Color3.fromRGB(120, 60, 180)
-    viewport.LightDirection = Vector3.new(0, -1, 0)
 
-    local world = Instance.new("WorldModel")  
-    world.Parent = viewport  
-
-    local vcam = Instance.new("Camera")  
+    local world = Instance.new("WorldModel", viewport)  
+    local vcam = Instance.new("Camera", viewport)  
     viewport.CurrentCamera = vcam  
-    vcam.Parent = viewport  
 
-    local cc = Instance.new("ColorCorrectionEffect")
-    cc.Brightness = -0.25
-    cc.Contrast = 0.45
-    cc.Saturation = -0.65
+    local cc = Instance.new("ColorCorrectionEffect", viewport)
+    cc.Brightness, cc.Contrast, cc.Saturation = -0.25, 0.45, -0.65
     cc.TintColor = Color3.fromRGB(180, 120, 255)
-    cc.Parent = viewport
 
-    -- GALAXY TEXTURE
-    local url = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/sagdig_opo0431b_web.jpg"
-    local fileName = "galaxy.jpg"
-    if not isfile(fileName) then writefile(fileName, game:HttpGet(url)) end
-    local galaxyTexture = getcustomasset(fileName)
+    -- 🌌 GALAXY TEXTURE
+    local galaxyUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/sagdig_opo0431b_web.jpg"
+    local galaxyFile = "galaxy.jpg"
+    if not isfile(galaxyFile) then writefile(galaxyFile, game:HttpGet(galaxyUrl)) end
+    local galaxyTexture = getcustomasset(galaxyFile)
 
     local SIZE = 800  
-    local skyCube = Instance.new("Part")  
+    local skyCube = Instance.new("Part", world)  
     skyCube.Size = Vector3.new(SIZE, SIZE, SIZE)  
-    skyCube.Anchored = true  
-    skyCube.CanCollide = false  
-    skyCube.Material = Enum.Material.SmoothPlastic  
+    skyCube.Anchored, skyCube.CanCollide = true, false  
     skyCube.Color = Color3.new(0,0,0)  
-    skyCube.Parent = world  
 
     for _, face in ipairs(Enum.NormalId:GetEnumItems()) do  
-        local decal = Instance.new("Decal")  
+        local decal = Instance.new("Decal", skyCube)  
         decal.Texture = galaxyTexture  
         decal.Face = face  
-        decal.Parent = skyCube  
     end  
 
-    -- 🌐 GRID SYSTEM (Frozen at activation position)
-    local GRID_SIZE = 1200
-    local CELL_SIZE = 25
-    local GRID_FOLDER = Instance.new("Model", world)
-    
-    -- Capture position at moment of click
-    local startPivot = player.Character and player.Character:GetPivot() or CFrame.new(0,0,0)
-    local startPos = startPivot.Position
-
-    local function makeLine(size, cf)
-        local p = Instance.new("Part", GRID_FOLDER)
-        p.Anchored, p.CanCollide = true, false
-        p.Material, p.Color, p.Transparency = Enum.Material.Neon, Color3.new(1,1,1), 0.5
-        p.Size = size
-        p.CFrame = cf
-        return p
-    end
-
-    -- Spawn lines centered on player feet
-    for x = -GRID_SIZE, GRID_SIZE, CELL_SIZE do
-        makeLine(Vector3.new(0.05, 0.05, GRID_SIZE * 2), CFrame.new(startPos.X + x, startPos.Y - 3.5, startPos.Z))
-    end
-    for z = -GRID_SIZE, GRID_SIZE, CELL_SIZE do
-        makeLine(Vector3.new(GRID_SIZE * 2, 0.05, 0.05), CFrame.new(startPos.X, startPos.Y - 3.5, startPos.Z + z))
-    end
-
-    -- 🧊 NEON OUTLINE CUBES (Spawned Above and Below Grid)
-    local rotatingCubes = {}
-    local function createOutlineCube()
-        local container = Instance.new("Model", world)
-        local cSize = math.random(5, 20)
-        local thick = 0.1
-        
-        -- Random pos relative to start position to ensure coverage above and below
-        local centerPos = startPos + Vector3.new(
-            math.random(-SIZE/2, SIZE/2), 
-            math.random(-SIZE/2, SIZE/2), 
-            math.random(-SIZE/2, SIZE/2)
-        )
-        
-        local edges = {
-            {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, cSize/2)},
-            {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, cSize/2)},
-            {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, -cSize/2)},
-            {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, -cSize/2)},
-            {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, cSize/2)},
-            {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, cSize/2)},
-            {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, -cSize/2)},
-            {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, -cSize/2)},
-            {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, cSize/2, 0)},
-            {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, cSize/2, 0)},
-            {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, -cSize/2, 0)},
-            {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, -cSize/2, 0)},
-        }
-        for _, data in ipairs(edges) do
-            local p = Instance.new("Part")
-            p.Size, p.Position, p.Anchored, p.CanCollide = data[1], centerPos + data[2], true, false
-            p.Material, p.Color, p.Transparency = Enum.Material.Neon, Color3.new(1,1,1), 0.2
-            p.Parent = container
-        end
-        local rotSpeed = Vector3.new(math.random(-10, 10)/2000, math.random(-10, 10)/2000, math.random(-10, 10)/2000)
-        table.insert(rotatingCubes, {model = container, pos = centerPos, speed = rotSpeed, angle = CFrame.Angles(0,0,0)})
-    end
-    for i = 1, 300 do createOutlineCube() end
-
-    -- ⭐ STARS
-    local STAR_COUNT = 400
-    local specialColors = {Color3.fromRGB(255, 80, 80), Color3.fromRGB(80, 200, 255), Color3.fromRGB(120, 255, 120), Color3.fromRGB(255, 120, 255), Color3.fromRGB(255, 255, 120)}
-    for i = 1, STAR_COUNT do  
-        local star = Instance.new("Part", world)  
-        star.Shape, star.Size, star.Anchored, star.Material = Enum.PartType.Ball, Vector3.new(0.8,0.8,0.8), true, Enum.Material.Neon  
-        star.Color = (math.random(1, 100) <= 10) and specialColors[math.random(1, #specialColors)] or Color3.new(1,1,1)
-        star.Position = startPos + Vector3.new(math.random(-SIZE/2, SIZE/2), math.random(-SIZE/2, SIZE/2), math.random(-SIZE/2, SIZE/2))  
-    end  
-
-    -- 🚀 STABLE PHANTOM FLOOR
-    local phantomFloor = Instance.new("Part")
-    phantomFloor.Name = "KC_PHYSICS_FLOOR"
-    phantomFloor.Size = Vector3.new(200, 1, 200)
-    phantomFloor.Transparency = 1
-    phantomFloor.Anchored = true
-    phantomFloor.CanCollide = true
-    phantomFloor.Parent = workspace
-
-    local isActive = true
-    local originalCollisions = {}
-    local currentSeat = nil
-
-    -- 🔄 CHARACTER CAPTURE LOGIC
-    local fakePlayers = {}  
-    local fakeNPCs = {}
-
+    -- 🔄 HELPERS
     local function syncAnimations(realHum, fakeHum)
         if not realHum or not fakeHum then return end  
         local fakeAnimator = fakeHum:FindFirstChildOfClass("Animator") or Instance.new("Animator", fakeHum)
@@ -266,7 +153,7 @@ activateBtn.MouseButton1Click:Connect(function()
     end  
 
     local function cloneCharacter(char)  
-        if not char then return nil end  
+        if not char or char:IsDescendantOf(viewport) then return nil end  
         char.Archivable = true  
         local model = char:Clone()
         model.Parent = world
@@ -281,14 +168,107 @@ activateBtn.MouseButton1Click:Connect(function()
         return model  
     end  
 
-    -- INITIAL CAPTURE
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Character then fakePlayers[plr] = cloneCharacter(plr.Character) end
+    -- 🌐 PERMANENT PLATFORM & GRID
+    local startPivot = player.Character and player.Character:GetPivot() or CFrame.new(0,0,0)
+    local startPos = startPivot.Position
+
+    local permFloor = Instance.new("Part", workspace)
+    permFloor.Name = "KC_PERMANENT_FLOOR"
+    permFloor.Size = Vector3.new(4000, 1, 4000)
+    permFloor.CFrame = CFrame.new(startPos.X, startPos.Y - 3.5, startPos.Z) 
+    permFloor.Transparency = 1
+    permFloor.Anchored = true
+    permFloor.CanCollide = true
+
+    local GRID_SIZE, CELL_SIZE = 1200, 25
+    local GRID_FOLDER = Instance.new("Model", world)
+    
+    local function makeLine(size, cf)
+        local p = Instance.new("Part", GRID_FOLDER)
+        p.Anchored, p.CanCollide = true, false
+        p.Material, p.Color, p.Transparency = Enum.Material.Neon, Color3.new(1,1,1), 0.5
+        p.Size = size
+        p.CFrame = cf
     end
+
+    for x = -GRID_SIZE, GRID_SIZE, CELL_SIZE do
+        makeLine(Vector3.new(0.05, 0.05, GRID_SIZE * 2), CFrame.new(startPos.X + x, startPos.Y - 3.5, startPos.Z))
+    end
+    for z = -GRID_SIZE, GRID_SIZE, CELL_SIZE do
+        makeLine(Vector3.new(GRID_SIZE * 2, 0.05, 0.05), CFrame.new(startPos.X, startPos.Y - 3.5, startPos.Z + z))
+    end
+
+    -- 🧊 300 NEON OUTLINE CUBES
+    local rotatingCubes = {}
+    for i = 1, 300 do
+        local container = Instance.new("Model", world)
+        local cSize = math.random(5, 20)
+        local thick = 0.1
+        local centerPos = startPos + Vector3.new(math.random(-SIZE/2, SIZE/2), math.random(-SIZE/2, SIZE/2), math.random(-SIZE/2, SIZE/2))
+        
+        local edges = {
+            {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, cSize/2)},
+            {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, cSize/2)},
+            {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, -cSize/2)},
+            {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, -cSize/2)},
+            {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, cSize/2)},
+            {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, cSize/2)},
+            {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, -cSize/2)},
+            {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, -cSize/2)},
+            {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, cSize/2, 0)},
+            {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, cSize/2, 0)},
+            {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, -cSize/2, 0)},
+            {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, -cSize/2, 0)},
+        }
+        for _, data in ipairs(edges) do
+            local p = Instance.new("Part", container)
+            p.Size, p.Position, p.Anchored, p.CanCollide = data[1], centerPos + data[2], true, false
+            p.Material, p.Color, p.Transparency = Enum.Material.Neon, Color3.new(1,1,1), 0.2
+        end
+        local rotSpeed = Vector3.new(math.random(-10, 10)/2000, math.random(-10, 10)/2000, math.random(-10, 10)/2000)
+        table.insert(rotatingCubes, {model = container, pos = centerPos, speed = rotSpeed, angle = CFrame.Angles(0,0,0)})
+    end
+
+    -- ⭐ STARS
+    local specialColors = {Color3.fromRGB(255, 80, 80), Color3.fromRGB(80, 200, 255), Color3.fromRGB(120, 255, 120), Color3.fromRGB(255, 120, 255), Color3.fromRGB(255, 255, 120)}
+    for i = 1, 400 do  
+        local star = Instance.new("Part", world)  
+        star.Shape, star.Size, star.Anchored, star.Material = Enum.PartType.Ball, Vector3.new(0.8,0.8,0.8), true, Enum.Material.Neon  
+        star.Color = (math.random(1, 100) <= 10) and specialColors[math.random(1, #specialColors)] or Color3.new(1,1,1)
+        star.Position = startPos + Vector3.new(math.random(-SIZE/2, SIZE/2), math.random(-SIZE/2, SIZE/2), math.random(-SIZE/2, SIZE/2))
+    end
+
+    -- 🔍 SCAN FOR STANDS AND PLAYERS
+    local isActive = true
+    local originalCollisions = {}
+    local fakePlayers, fakeNPCs = {}, {}
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then 
+            fakePlayers[plr] = cloneCharacter(plr.Character) 
+            if plr ~= player then
+                for _, p in ipairs(plr.Character:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        originalCollisions[p] = p.CanCollide
+                        p.CanCollide = false
+                    end
+                end
+            end
+        end
+    end
+    
     for _, v in ipairs(workspace:GetDescendants()) do
         if (v:IsA("Humanoid") and not Players:GetPlayerFromCharacter(v.Parent)) or (v.Name == "KingCrimson" and v:IsA("Model")) then
             local target = v:IsA("Humanoid") and v.Parent or v
-            fakeNPCs[target] = cloneCharacter(target)
+            if not target:IsDescendantOf(gui) then
+                fakeNPCs[target] = cloneCharacter(target)
+                for _, p in ipairs(target:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        originalCollisions[p] = p.CanCollide
+                        p.CanCollide = false
+                    end
+                end
+            end
         end
     end
 
@@ -298,128 +278,101 @@ activateBtn.MouseButton1Click:Connect(function()
         local targetDiameter = math.sqrt(cam.ViewportSize.X^2 + cam.ViewportSize.Y^2) * 1.5
         sound:Play()
         activateBtn.Visible = false
-        
-        -- Camera Fix: Set to Invisicam during effect
         player.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
+        player.CameraMaxZoomDistance = 9999
 
-        -- 🕶️ SEAT INVISIBILITY TOGGLE
         local char = player.Character
+        local currentSeat
         if char then
-            local savedpos = char.HumanoidRootPart.CFrame
+            local savedpos = char:GetPivot()
             char:MoveTo(Vector3.new(0, 5000, 0)) 
             task.wait(0.1)
-            currentSeat = Instance.new("Seat")
-            currentSeat.Parent = workspace
-            currentSeat.Name = "KC_INVIS_SEAT"
-            currentSeat.Transparency = 1
-            currentSeat.CanCollide = false
-            currentSeat.Anchored = false
+            currentSeat = Instance.new("Seat", workspace)
+            currentSeat.Transparency, currentSeat.CanCollide = 1, false
             currentSeat.Position = Vector3.new(0, 5000, 0)
-            local Weld = Instance.new("Weld")
-            Weld.Parent = currentSeat
-            Weld.Part0 = currentSeat
-            Weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+            local Weld = Instance.new("Weld", currentSeat)
+            Weld.Part0, Weld.Part1 = currentSeat, char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
             task.wait()
             currentSeat.CFrame = savedpos
         end
 
         task.wait(0.093)
         TweenService:Create(mask, TweenInfo.new(1.2, Enum.EasingStyle.Cubic), {Size = UDim2.fromOffset(targetDiameter, targetDiameter)}):Play()
-        
         task.wait(sound.TimeLength - 1.4)
         
         isActive = false 
-        
-        -- Restore original camera mode
         player.DevCameraOcclusionMode = originalOcclusion
+        player.CameraMaxZoomDistance = originalMaxZoom
+        
+        -- Restore Character Collisions
+        if player.Character then
+            for _, v in ipairs(player.Character:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    if v.Name == "HumanoidRootPart" then v.CanCollide = false
+                    elseif v.Name == "UpperTorso" or v.Name == "LowerTorso" or v.Name == "Torso" or v.Name == "Head" then
+                        v.CanCollide = true
+                    end
+                end
+            end
+        end
 
-        -- 🛠️ CLEANUP
         if currentSeat then currentSeat:Destroy() end
+        
         for part, state in pairs(originalCollisions) do
             if part and part.Parent then part.CanCollide = state end
-        end
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= player and plr.Character then
-                for _, p in ipairs(plr.Character:GetDescendants()) do
-                    if p:IsA("BasePart") then p.Anchored = false end
-                end
-            end
-        end
-        for realNPC, _ in pairs(fakeNPCs) do
-            if realNPC and realNPC.Parent then
-                for _, p in ipairs(realNPC:GetDescendants()) do
-                    if p:IsA("BasePart") then p.Anchored = false end
-                end
-            end
         end
         
         local closeTween = TweenService:Create(mask, TweenInfo.new(1.2, Enum.EasingStyle.Cubic), {Size = UDim2.fromOffset(0, 0)})
         closeTween:Play()
         closeTween.Completed:Wait()
         
-        phantomFloor:Destroy()
         gui:Destroy()
         activateBtn.Visible = true
-        table.clear(fakePlayers)
-        table.clear(fakeNPCs)
         sound:Destroy()
     end)
 
-    -- 🛠️ STABLE PHYSICS LOOP
-    local postConn
-    postConn = RunService.PostSimulation:Connect(function()
-        if not isActive then postConn:Disconnect() return end
-        local char = player.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if root and hum then
-            local params = RaycastParams.new()
-            params.FilterDescendantsInstances = {char, phantomFloor}
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -20, 0), params)
-            local groundY = rayResult and rayResult.Position.Y or (root.Position.Y - hum.HipHeight - (root.Size.Y/2))
-            phantomFloor.CFrame = CFrame.new(root.Position.X, groundY - 0.55, root.Position.Z)
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("BasePart") and obj.Name ~= "KC_PHYSICS_FLOOR" and not obj:IsDescendantOf(char) then
-                    if originalCollisions[obj] == nil then originalCollisions[obj] = obj.CanCollide end
-                    obj.CanCollide = false
-                end
-            end
-        end
-    end)
-
-    -- 👁️ VISUAL RENDER LOOP
     local renderConn
     renderConn = RunService.RenderStepped:Connect(function()  
         if not isActive then renderConn:Disconnect() return end
+        
+        -- 🏃 NOCLIP LOOP
+        if player.Character then
+            for _, v in ipairs(player.Character:GetDescendants()) do
+                if v:IsA("BasePart") and v.CanCollide then
+                    v.CanCollide = false
+                end
+            end
+        end
+
         vcam.CFrame, vcam.FieldOfView = cam.CFrame, cam.FieldOfView
         skyCube.CFrame = CFrame.new(cam.CFrame.Position)
-        
-        for _, data in ipairs(rotatingCubes) do
-            data.angle = data.angle * CFrame.Angles(data.speed.X, data.speed.Y, data.speed.Z)
-            data.model:PivotTo(CFrame.new(data.pos) * data.angle)
+
+        for _, c in ipairs(rotatingCubes) do
+            c.angle = c.angle * CFrame.Angles(c.speed.X, c.speed.Y, c.speed.Z)
+            c.model:PivotTo(CFrame.new(c.pos) * c.angle)
         end
-        
+
         for plr, model in pairs(fakePlayers) do  
-            local real = plr.Character
-            if real and model and model.PrimaryPart then  
-                local root = real:FindFirstChild("HumanoidRootPart")
-                if plr == player then
-                    model:PivotTo(root.CFrame)  
-                    syncAnimations(real:FindFirstChildOfClass("Humanoid"), model:FindFirstChildOfClass("Humanoid"))
-                else
-                    for _, p in ipairs(real:GetDescendants()) do if p:IsA("BasePart") then p.Anchored = true end end
+            if plr.Character and model then  
+                if plr == player then 
+                    model:PivotTo(plr.Character:GetPivot())
+                    syncAnimations(plr.Character:FindFirstChildOfClass("Humanoid"), model:FindFirstChildOfClass("Humanoid"))
+                else 
+                    for _, p in ipairs(plr.Character:GetDescendants()) do if p:IsA("BasePart") then p.Anchored = true end end 
                 end
             end  
-        end  
+        end
+        
         for real, model in pairs(fakeNPCs) do
             if real and real.Parent and model then
                 local root = real:FindFirstChild("HumanoidRootPart") or real.PrimaryPart
-                if real.Name == "KingCrimson" then
+                if root then
                     model:PivotTo(root.CFrame)
-                    syncAnimations(real:FindFirstChildOfClass("Humanoid"), model:FindFirstChildOfClass("Humanoid"))
-                else
-                    for _, p in ipairs(real:GetDescendants()) do if p:IsA("BasePart") then p.Anchored = true end end
+                    local hum = real:FindFirstChildOfClass("Humanoid")
+                    local fakeHum = model:FindFirstChildOfClass("Humanoid")
+                    if hum and fakeHum then
+                        syncAnimations(hum, fakeHum)
+                    end
                 end
             end
         end
