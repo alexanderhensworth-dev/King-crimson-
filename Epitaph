@@ -5,13 +5,10 @@ local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
--- Character variables (Auto-updating on spawn)
-local character, rootPart, humanoid
-
 -- Configuration
 local DETECTION_RADIUS = 50
 local DODGE_DISTANCE = 14
-local MIN_SPEED = 12 
+local MIN_SPEED = 35 
 local ANIM_ID = "rbxassetid://119594034834137"
 local SOUND_ID = "rbxassetid://123891403807633"
 local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_005629_0000-removebg-preview.png"
@@ -22,31 +19,48 @@ local isActive = false
 local currentTrack = nil
 local posHistory = {}
 local lastDodgeObject = nil
+local ignoreList = {} -- FAST CACHE FOR PLAYERS
 
 -----------------------------------------------------------
--- CHARACTER REFRESH SYSTEM
+-- OPTIMIZED IGNORE LIST (THE LAG KILLER)
 -----------------------------------------------------------
+local function updateIgnoreList()
+    local newList = {character}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then
+            table.insert(newList, p.Character)
+        end
+    end
+    -- Also ignore stands or specific effects
+    local sc = workspace:FindFirstChild("KingCrimson")
+    if sc then table.insert(newList, sc) end
+    
+    ignoreList = newList
+end
+
+Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(updateIgnoreList) end)
+Players.PlayerRemoving:Connect(updateIgnoreList)
+task.spawn(function() while task.wait(5) do updateIgnoreList() end end) -- Safety refresh
+
+-----------------------------------------------------------
+-- CHARACTER REFRESH
+-----------------------------------------------------------
+local character, rootPart, humanoid
 local function updateCharacter(newCharacter)
     character = newCharacter
     rootPart = character:WaitForChild("HumanoidRootPart", 5)
     humanoid = character:WaitForChild("Humanoid", 5)
-    
-    humanoid.Died:Connect(function()
-        rootPart = nil
-        humanoid = nil
-    end)
+    updateIgnoreList()
 end
 
 player.CharacterAdded:Connect(updateCharacter)
 if player.Character then updateCharacter(player.Character) end
 
 -----------------------------------------------------------
--- GUI & ASSET SETUP
+-- ASSET SETUP & DRAGGABLE GUI
 -----------------------------------------------------------
 local success, content = pcall(function() return game:HttpGet(IMAGE_URL) end)
-if success then 
-    writefile(FILE_NAME, content) 
-end
+if success then writefile(FILE_NAME, content) end
 
 local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
 screenGui.Name = "KingCrimsonDodge"
@@ -85,7 +99,6 @@ UserInputService.InputChanged:Connect(function(input)
     if input == dragInput and dragging then updateDrag(input) end
 end)
 
--- Toggle Logic (10 Second Activation)
 imageButton.MouseButton1Click:Connect(function()
     if not isActive then
         isActive = true
@@ -97,7 +110,7 @@ imageButton.MouseButton1Click:Connect(function()
 end)
 
 -----------------------------------------------------------
--- VISUALS & SOUND
+-- VISUALS & ANIMATIONS
 -----------------------------------------------------------
 local function playDodgeSound()
     if not rootPart then return end
@@ -106,7 +119,6 @@ local function playDodgeSound()
     sound.Volume = 1
     sound:Play()
     sound.Ended:Connect(function() sound:Destroy() end)
-    task.delay(5, function() if sound then sound:Destroy() end end)
 end
 
 local function createAfterImage()
@@ -142,7 +154,7 @@ local function playDodgeAnim(side)
 end
 
 -----------------------------------------------------------
--- SMART-RANDOM PATHFINDING
+-- SMART DODGE LOGIC
 -----------------------------------------------------------
 local function getBestDodgeDirection(bulletVel, bulletPos)
     local bulletDir = bulletVel.Unit
@@ -161,7 +173,7 @@ local function getBestDodgeDirection(bulletVel, bulletPos)
     
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {character, workspace:FindFirstChild("KingCrimson"), workspace:FindFirstChild("StandAura")}
+    params.FilterDescendantsInstances = ignoreList
     
     local validOptions = {}
 
@@ -175,7 +187,7 @@ local function getBestDodgeDirection(bulletVel, bulletPos)
         local pathPoint = bulletPos + (bulletDir * proj)
         local safetyMargin = (potentialPos - pathPoint).Magnitude
 
-        if safetyMargin > 6 and space > 10 then
+        if safetyMargin > 6 and space > 8 then
             table.insert(validOptions, {vec = data.vec, side = data.side, dist = space})
         end
     end
@@ -189,27 +201,27 @@ local function getBestDodgeDirection(bulletVel, bulletPos)
 end
 
 -----------------------------------------------------------
--- MAIN HEARTBEAT ENGINE (ANTI-LIMB VERSION)
+-- OPTIMIZED HEARTBEAT
 -----------------------------------------------------------
 RunService.Heartbeat:Connect(function(dt)
     if not isActive or not rootPart or not humanoid or humanoid.Health <= 0 then return end
     local myPos = rootPart.Position
 
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and not obj:IsDescendantOf(character) then
-            
-            -- IGNORE FILTER (Stand & Aura)
-            if obj.Name == "StandAura" or obj.Name == "KingCrimson" or 
-               obj:FindFirstAncestor("StandAura") or obj:FindFirstAncestor("KingCrimson") then
-                continue
+    -- Optimization: Only scan for BaseParts in the workspace (not descendants)
+    -- This is significantly faster for executor-based scanning
+    for _, obj in ipairs(workspace:GetChildren()) do
+        -- Skip folders, players, etc using the ignoreList cache
+        local shouldIgnore = false
+        for _, item in ipairs(ignoreList) do
+            if obj == item or obj:IsDescendantOf(item) then
+                shouldIgnore = true
+                break
             end
+        end
+        if shouldIgnore then continue end
 
-            -- ANTI-LIMB FILTER: Ignore parts belonging to players
-            local model = obj:FindFirstAncestorOfClass("Model")
-            if model and model:FindFirstChildOfClass("Humanoid") then
-                continue
-            end
-
+        -- Only check objects within radius to save math time
+        if obj:IsA("BasePart") then
             local dist = (myPos - obj.Position).Magnitude
             if dist < DETECTION_RADIUS then
                 local bv = obj:FindFirstChildOfClass("BodyVelocity") or obj:FindFirstChildOfClass("LinearVelocity")
@@ -227,7 +239,7 @@ RunService.Heartbeat:Connect(function(dt)
                     
                     if projection > 0 then
                         local pathPoint = obj.Position + (vel.Unit * projection)
-                        if (myPos - pathPoint).Magnitude < 8 then
+                        if (myPos - pathPoint).Magnitude < 7 then
                             
                             lastDodgeObject = obj
                             local dodgeVec, side, moveDist = getBestDodgeDirection(vel, obj.Position)
@@ -238,7 +250,7 @@ RunService.Heartbeat:Connect(function(dt)
                             
                             rootPart.CFrame = rootPart.CFrame + (dodgeVec * moveDist)
 
-                            task.delay(0.15, function() 
+                            task.delay(0.2, function() 
                                 if lastDodgeObject == obj then lastDodgeObject = nil end 
                             end)
                             break
