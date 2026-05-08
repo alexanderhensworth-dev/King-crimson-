@@ -1,4 +1,4 @@
-Local Players = game:GetService("Players")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -9,7 +9,6 @@ local player = Players.LocalPlayer
 local DETECTION_RADIUS = 50
 local DODGE_DISTANCE = 14
 local MIN_SPEED = 35 
-local PREDICTION_TIME = 0.7 -- Epitaph lookahead time
 local ANIM_ID = "rbxassetid://119594034834137"
 local SOUND_ID = "rbxassetid://123891403807633"
 local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_005629_0000-removebg-preview.png"
@@ -19,134 +18,29 @@ local FILE_NAME = "KingCrimsonIcon.png"
 local isActive = false
 local currentTrack = nil
 local posHistory = {}
-local ghostCache = {} 
 local lastDodgeObject = nil
-local ignoreList = {} 
-
------------------------------------------------------------
--- EPITAPH ANIMATION SYNC
------------------------------------------------------------
-local function syncAnimations(sourceChar, ghostChar)
-    local sourceHum = sourceChar:FindFirstChildOfClass("Humanoid")
-    local ghostHum = ghostChar:FindFirstChildOfClass("Humanoid")
-    if not sourceHum or not ghostHum then return end
-
-    local sourceAnimator = sourceHum:FindFirstChildOfClass("Animator")
-    local ghostAnimator = ghostHum:FindFirstChildOfClass("Animator") or Instance.new("Animator", ghostHum)
-    if not sourceAnimator then return end
-
-    local sourceTracks = sourceAnimator:GetPlayingAnimationTracks()
-    local ghostTracks = ghostAnimator:GetPlayingAnimationTracks()
-
-    -- Stop ghost tracks no longer on source
-    for _, gTrack in ipairs(ghostTracks) do
-        local isPlaying = false
-        for _, sTrack in ipairs(sourceTracks) do
-            if sTrack.Animation.AnimationId == gTrack.Animation.AnimationId then
-                isPlaying = true
-                break
-            end
-        end
-        if not isPlaying then gTrack:Stop(0.1) end
-    end
-
-    -- Play/Sync tracks
-    for _, sTrack in ipairs(sourceTracks) do
-        local gTrack
-        for _, t in ipairs(ghostTracks) do
-            if t.Animation.AnimationId == sTrack.Animation.AnimationId then
-                gTrack = t
-                break
-            end
-        end
-
-        if not gTrack then
-            gTrack = ghostAnimator:LoadAnimation(sTrack.Animation)
-            gTrack:Play(0.1)
-        end
-
-        gTrack.TimePosition = sTrack.TimePosition
-        gTrack:AdjustWeight(sTrack.WeightCurrent > 0 and sTrack.WeightCurrent or 1)
-        gTrack:AdjustSpeed(sTrack.Speed)
-    end
-end
-
------------------------------------------------------------
--- GHOST CREATION & CLEANUP
------------------------------------------------------------
-local function createEpitaphGhost(targetPlayer)
-    if ghostCache[targetPlayer] then return ghostCache[targetPlayer] end
-    
-    local sourceChar = targetPlayer.Character
-    if not sourceChar then return nil end
-
-    sourceChar.Archivable = true
-    local ghost = sourceChar:Clone()
-    sourceChar.Archivable = false
-    
-    ghost.Name = "" 
-    
-    local hum = ghost:FindFirstChildOfClass("Humanoid")
-    if hum then 
-        hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-        hum.PlatformStand = true 
-    end
-
-    local highlight = Instance.new("Highlight", ghost)
-    highlight.FillColor = Color3.fromRGB(255, 0, 80)
-    highlight.FillTransparency = 0.4
-
-    for _, item in ipairs(ghost:GetDescendants()) do
-        if item:IsA("LuaSourceContainer") or item:IsA("Sound") or item:IsA("BillboardGui") then
-            item:Destroy()
-        elseif item:IsA("BasePart") then
-            if item.Name == "HumanoidRootPart" then
-                item.Transparency = 1
-                item.Anchored = true 
-            else
-                item.Transparency = 0.7
-                item.Material = Enum.Material.Neon
-                item.Anchored = false 
-            end
-            item.CanCollide = false
-            item.CanTouch = false
-            item.CanQuery = false
-        end
-    end
-    
-    ghost.Parent = workspace
-    ghostCache[targetPlayer] = ghost
-    return ghost
-end
-
-local function clearAllGhosts()
-    for p, g in pairs(ghostCache) do
-        if g then g:Destroy() end
-        ghostCache[p] = nil
-    end
-end
+local ignoreList = {} -- FAST CACHE FOR PLAYERS
 
 -----------------------------------------------------------
 -- OPTIMIZED IGNORE LIST (THE LAG KILLER)
 -----------------------------------------------------------
 local function updateIgnoreList()
-    local newList = {player.Character}
+    local newList = {character}
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character then
             table.insert(newList, p.Character)
         end
     end
+    -- Also ignore stands or specific effects
     local sc = workspace:FindFirstChild("KingCrimson")
     if sc then table.insert(newList, sc) end
+    
     ignoreList = newList
 end
 
 Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(updateIgnoreList) end)
-Players.PlayerRemoving:Connect(function(p)
-    if ghostCache[p] then ghostCache[p]:Destroy() ghostCache[p] = nil end
-    updateIgnoreList()
-end)
-task.spawn(function() while task.wait(5) do updateIgnoreList() end end)
+Players.PlayerRemoving:Connect(updateIgnoreList)
+task.spawn(function() while task.wait(5) do updateIgnoreList() end end) -- Safety refresh
 
 -----------------------------------------------------------
 -- CHARACTER REFRESH
@@ -205,14 +99,13 @@ UserInputService.InputChanged:Connect(function(input)
     if input == dragInput and dragging then updateDrag(input) end
 end)
 
--- TOGGLE FUNCTION (Removed 10s Timer)
 imageButton.MouseButton1Click:Connect(function()
-    isActive = not isActive
-    if isActive then
+    if not isActive then
+        isActive = true
         imageButton.ImageColor3 = Color3.fromRGB(255, 100, 100)
-    else
+        task.wait(10)
+        isActive = false
         imageButton.ImageColor3 = Color3.fromRGB(255, 255, 255)
-        clearAllGhosts()
     end
 end)
 
@@ -308,31 +201,16 @@ local function getBestDodgeDirection(bulletVel, bulletPos)
 end
 
 -----------------------------------------------------------
--- INTEGRATED HEARTBEAT (EPITAPH + DODGE)
+-- OPTIMIZED HEARTBEAT
 -----------------------------------------------------------
 RunService.Heartbeat:Connect(function(dt)
     if not isActive or not rootPart or not humanoid or humanoid.Health <= 0 then return end
     local myPos = rootPart.Position
 
-    -- 1. EPITAPH PREDICTION VISION
-    for _, otherPlayer in ipairs(Players:GetPlayers()) do
-        if otherPlayer ~= player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            local targetRP = otherPlayer.Character.HumanoidRootPart
-            local ghost = createEpitaphGhost(otherPlayer)
-            
-            if ghost and ghost.PrimaryPart then
-                local futurePos = targetRP.Position + (targetRP.AssemblyLinearVelocity * PREDICTION_TIME)
-                ghost:SetPrimaryPartCFrame(CFrame.new(futurePos) * targetRP.CFrame.Rotation)
-                syncAnimations(otherPlayer.Character, ghost)
-            end
-        elseif ghostCache[otherPlayer] then
-            ghostCache[otherPlayer]:Destroy()
-            ghostCache[otherPlayer] = nil
-        end
-    end
-
-    -- 2. PROJECTILE SCANNING & DODGING
+    -- Optimization: Only scan for BaseParts in the workspace (not descendants)
+    -- This is significantly faster for executor-based scanning
     for _, obj in ipairs(workspace:GetChildren()) do
+        -- Skip folders, players, etc using the ignoreList cache
         local shouldIgnore = false
         for _, item in ipairs(ignoreList) do
             if obj == item or obj:IsDescendantOf(item) then
@@ -342,6 +220,7 @@ RunService.Heartbeat:Connect(function(dt)
         end
         if shouldIgnore then continue end
 
+        -- Only check objects within radius to save math time
         if obj:IsA("BasePart") then
             local dist = (myPos - obj.Position).Magnitude
             if dist < DETECTION_RADIUS then
@@ -361,6 +240,7 @@ RunService.Heartbeat:Connect(function(dt)
                     if projection > 0 then
                         local pathPoint = obj.Position + (vel.Unit * projection)
                         if (myPos - pathPoint).Magnitude < 7 then
+                            
                             lastDodgeObject = obj
                             local dodgeVec, side, moveDist = getBestDodgeDirection(vel, obj.Position)
                             
