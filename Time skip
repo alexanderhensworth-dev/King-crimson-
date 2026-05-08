@@ -9,7 +9,7 @@ local player = Players.LocalPlayer
 -- // Configuration
 local DISTANCE = 20
 local GHOST_DURATION = 0.35
-local COOLDOWN_TIME = 2.2 
+local COOLDOWN_TIME = 2.2 -- Cooldown back in
 local canUse = true
 local SOUND_ID = "rbxassetid://123891403807633"
 local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_005901_0000-removebg-preview.png"
@@ -57,7 +57,7 @@ for i = 1, 50 do
     p.Color = (i % 2 == 0) and Color3.new(1,1,1) or Color3.new(1,0,0)
 end
 
--- // UI Creation
+-- // UI Creation (ResetOnSpawn = false fixes the breaking)
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "TeleportGui"
 screenGui.IgnoreGuiInset = true
@@ -98,10 +98,6 @@ UserInputService.InputChanged:Connect(function(input)
 	if input == dragInput and dragging then update(input) end
 end)
 
--- // --- SHARED VIEWPORT ASSETS ---
-local sharedWorld = worldTemplate:Clone()
-local sharedCam = Instance.new("Camera")
-
 -- // GLITCH GENERATOR
 local function createGlitchLine()
     local line = Instance.new("Frame", screenGui)
@@ -112,16 +108,12 @@ local function createGlitchLine()
     local vp = Instance.new("ViewportFrame", line)
     vp.Size, vp.BackgroundTransparency = UDim2.new(1, 0, 1, 0), 1
     
-    sharedWorld.Parent = vp
-    vp.CurrentCamera = sharedCam
+    worldTemplate:Clone().Parent = vp
+    local vCam = Instance.new("Camera", vp)
+    vCam.CFrame = CFrame.new(Vector3.new(math.random(-150, 150), math.random(10, 50), math.random(-150, 150)), Vector3.new(0,0,0))
+    vp.CurrentCamera = vCam
     
-    sharedCam.CFrame = CFrame.new(Vector3.new(math.random(-150, 150), math.random(10, 50), math.random(-150, 150)), Vector3.new(0,0,0))
-    
-    -- Safety Cleanup: reparent world before the line is destroyed to prevent sticking
-    task.delay(math.random(4, 15)/100, function()
-        sharedWorld.Parent = nil
-        line:Destroy()
-    end)
+    Debris:AddItem(line, math.random(4, 15)/100)
 end
 
 -- // Trigger
@@ -135,7 +127,7 @@ imageButton.Activated:Connect(function()
     canUse = false
     
     task.spawn(function()
-        for i = 1, 65 do 
+        for i = 1, 65 do -- More lines
             createGlitchLine()
             if i % 6 == 0 then RunService.RenderStepped:Wait() end
         end
