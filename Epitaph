@@ -1,279 +1,136 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
 
-local player = Players.LocalPlayer
-local cam = workspace.CurrentCamera
-
--- Configuration
-local DETECTION_RADIUS = 50
-local DODGE_DISTANCE = 14
-local MIN_SPEED = 35 
-local PREDICTION_TIME = 0.7 -- Epitaph lookahead window
-local ANIM_ID = "rbxassetid://119594034834137"
-local SOUND_ID = "rbxassetid://123891403807633"
-local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_005629_0000-removebg-preview.png"
-local FILE_NAME = "KingCrimsonIcon.png"
-
--- Performance & Trail Configuration
-local LERP_SMOOTHNESS = 0.18 -- Silky smooth interpolation
-local TOTAL_TRAIL_GHOSTS = 4 -- Hard cap of exactly 4 afterimages per player
-local UPDATE_TICK_RATE = 0.04 -- Snappier pacing interval for trail updates
-
--- State
 local isActive = false
 local currentTrack = nil
 local posHistory = {}
-local lastDodgeObject = nil
-local ignoreList = {} 
 
--- Viewport Storage & Tracking
-local ghostCache = {}
-local trailCache = {} -- Isolated track cache per player to prevent character crossing
-local lastUpdateTime = {}
+local function syncAnimations(sourceChar, ghostChar)
+    local sourceHum = sourceChar:FindFirstChildOfClass("Humanoid")
+    local ghostHum = ghostChar:FindFirstChildOfClass("Humanoid")
+    if not sourceHum or not ghostHum then return end
 
------------------------------------------------------------
--- VIEWPORT UI SETUP WITH WORLDMODEL
------------------------------------------------------------
-local viewportGui = Instance.new("ScreenGui")
-viewportGui.Name = "EpitaphViewportGui"
-viewportGui.ResetOnSpawn = false
-viewportGui.IgnoreGuiInset = true
-viewportGui.Parent = player:WaitForChild("PlayerGui")
+    local sourceAnimator = sourceHum:FindFirstChildOfClass("Animator")
+    local ghostAnimator = ghostHum:FindFirstChildOfClass("Animator") or Instance.new("Animator", ghostHum)
+    if not sourceAnimator then return end
 
-local viewportFrame = Instance.new("ViewportFrame")
-viewportFrame.Size = UDim2.fromScale(1, 1)
-viewportFrame.BackgroundTransparency = 1
-viewportFrame.Ambient = Color3.fromRGB(255, 255, 255)
-viewportFrame.LightColor = Color3.fromRGB(255, 255, 255)
-viewportFrame.Visible = false
-viewportFrame.Parent = viewportGui
+    local sourceTracks = sourceAnimator:GetPlayingAnimationTracks()
+    local ghostTracks = ghostAnimator:GetPlayingAnimationTracks()
 
-local worldModel = Instance.new("WorldModel")
-worldModel.Parent = viewportFrame
-
-local vCam = Instance.new("Camera")
-viewportFrame.CurrentCamera = vCam
-vCam.Parent = viewportFrame
-
------------------------------------------------------------
--- REPAIRED CLEANER: PRESERVES MOTOR6D JOINTS FOR ANIMATION
------------------------------------------------------------
-local function styleModelAsNeon(model)
-    local hum = model:FindFirstChildOfClass("Humanoid")
-    
-    for _, item in ipairs(model:GetDescendants()) do
-        local itemName = item.Name:lower()
-        -- CRITICAL FILTER: Drop tools, hats, particles, and footprint/step parts WITHOUT destroying Motor6Ds
-        if item:IsA("Tool") or item:IsA("Accessory") or item:IsA("Hat") or item:IsA("ParticleEmitter") or item:IsA("Beam") or item:IsA("Trail") 
-           or item:IsA("Decal") or item:IsA("Texture") or item:IsA("Clothing") or item:IsA("ShirtGraphic")
-           or itemName:find("foot") or itemName:find("print") or itemName:find("step") then
-            item:Destroy()
-        elseif item:IsA("BasePart") or item:IsA("MeshPart") then
-            item.CanCollide = false
-            item.CanTouch = false
-            item.CanQuery = false
-            
-            if item.Name == "HumanoidRootPart" then
-                item.Transparency = 1
-                item.Anchored = true
-            else
-                item.Anchored = false -- MUST BE FALSE FOR ANIMATIONS TO REGISTER TRANSFORM POSITIONS
-                item.Transparency = 0.2 
-                item.Material = Enum.Material.Neon
-                item.Color = Color3.fromRGB(255, 0, 80) -- Matching King Crimson Pink-Red
-                if item:IsA("MeshPart") then item.TextureID = "" end
-            end
-        elseif item:IsA("SpecialMesh") or item:IsA("CharacterMesh") then
-            if item:IsA("SpecialMesh") then item.TextureId = "" end
-        end
-    end
-    
-    if hum then hum:Destroy() end
-end
-
------------------------------------------------------------
--- COLD GENERATION: ANIMATION STACK PATCHED
------------------------------------------------------------
-local function initializePlayerCache(targetPlayer)
-    if trailCache[targetPlayer] or not isActive then return end 
-    
-    local sourceChar = targetPlayer.Character
-    if not sourceChar then return end
-
-    sourceChar.Archivable = true
-    
-    -- 1. Create the main tracking prediction ghost
-    local mainGhost = sourceChar:Clone()
-    mainGhost.Name = "MainGhost_" .. targetPlayer.Name
-    
-    -- Clean out accessories and footprint artifacts safely
-    for _, item in ipairs(mainGhost:GetDescendants()) do
-        local itemName = item.Name:lower()
-        if item:IsA("Tool") or item:IsA("Accessory") or item:IsA("Hat") or item:IsA("Script") or item:IsA("LocalScript") 
-           or item:IsA("Sound") or item:IsA("BillboardGui") or item:IsA("ParticleEmitter") or item:IsA("Decal") or item:IsA("Texture")
-           or itemName:find("foot") or itemName:find("print") or itemName:find("step") then
-            item:Destroy()
-        end
-    end
-
-    local mainHum = mainGhost:FindFirstChildOfClass("Humanoid")
-    local mainAnimator = nil
-    if mainHum then
-        mainHum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-        mainHum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-        mainHum.BreakJointsOnDeath = false
-        mainAnimator = mainHum:FindFirstChildOfClass("Animator") or Instance.new("Animator", mainHum)
-    end
-    
-    -- Style main ghost limbs safely without locking joints
-    for _, item in ipairs(mainGhost:GetDescendants()) do
-        if item:IsA("BasePart") or item:IsA("MeshPart") then
-            item.CanCollide = false
-            item.CanTouch = false
-            item.CanQuery = false
-            if item.Name ~= "HumanoidRootPart" then
-                item.Anchored = false -- Unanchored so Motor6D can manipulate transformations
-                item.Transparency = 0.2
-                item.Material = Enum.Material.Neon
-                item.Color = Color3.fromRGB(255, 0, 80)
-                if item:IsA("MeshPart") then item.TextureID = "" end
-            else
-                item.Anchored = true -- Keep the Root Part anchored for Pivot stabilization
-                item.Transparency = 1
-            end
-        elseif item:IsA("SpecialMesh") or item:IsA("CharacterMesh") then
-            if item:IsA("SpecialMesh") then item.TextureId = "" end
-        end
-    end
-    
-    mainGhost.PrimaryPart = mainGhost:FindFirstChild("HumanoidRootPart")
-    mainGhost.Parent = worldModel
-    ghostCache[targetPlayer] = mainGhost
-
-    -- 2. Pre-instantiate exactly 4 trail models 
-    local storageList = {}
-    for i = 1, TOTAL_TRAIL_GHOSTS do
-        local tClone = sourceChar:Clone()
-        tClone.Name = "Trail_" .. targetPlayer.Name .. "_" .. i
-        styleModelAsNeon(tClone)
-        tClone.PrimaryPart = tClone:FindFirstChild("HumanoidRootPart")
-        tClone.Parent = worldModel
-        
-        tClone:PivotTo(CFrame.new(0, -500, 0))
-        table.insert(storageList, tClone)
-    end
-    
-    trailCache[targetPlayer] = storageList
-    lastUpdateTime[targetPlayer] = 0
-    sourceChar.Archivable = false
-end
-
-local function updateLimbPositions(sourceGhost, targetTrailModel)
-    local sourceMap = {}
-    for _, p in ipairs(sourceGhost:GetDescendants()) do
-        if p:IsA("BasePart") then sourceMap[p.Name] = p.CFrame end
-    end
-    for _, p in ipairs(targetTrailModel:GetDescendants()) do
-        if p:IsA("BasePart") then
-            local cf = sourceMap[p.Name]
-            if cf then p.CFrame = cf end
-        end
-    end
-end
-
-local function updateTrailPositions(targetPlayer, latestGhostCFrame, currentGhost)
-    local list = trailCache[targetPlayer]
-    if not list then return end
-    
-    for i = TOTAL_TRAIL_GHOSTS, 2, -1 do
-        local leadGhost = list[i - 1]
-        local currentTrail = list[i]
-        updateLimbPositions(leadGhost, currentTrail)
-    end
-    
-    updateLimbPositions(currentGhost, list[1])
-end
-
-local function removePlayerFromCache(targetPlayer)
-    if ghostCache[targetPlayer] then ghostCache[targetPlayer]:Destroy() ghostCache[targetPlayer] = nil end
-    if trailCache[targetPlayer] then
-        for _, model in ipairs(trailCache[targetPlayer]) do
-            if model then model:Destroy() end
-        end
-        trailCache[targetPlayer] = nil
-    end
-    lastUpdateTime[targetPlayer] = nil
-end
-
-local function clearAllGhosts()
-    worldModel:ClearAllChildren()
-    table.clear(ghostCache)
-    table.clear(trailCache)
-    table.clear(lastUpdateTime)
-end
-
------------------------------------------------------------
--- FIX: RE-ENGINEERED ROBUST ANIMATION SYNCHRONIZATION
------------------------------------------------------------
-local function syncAnimations(realHum, fakeHum)
-    if not realHum or not fakeHum then return end  
-    local fakeAnimator = fakeHum:FindFirstChildOfClass("Animator") or Instance.new("Animator", fakeHum)
-    local realTracks = realHum:GetPlayingAnimationTracks()
-    local realMap = {}
-    
-    for _, track in ipairs(realTracks) do 
-        if track.Animation and track.Animation.AnimationId ~= "" then 
-            realMap[track.Animation.AnimationId] = track 
-        end 
-    end  
-    
-    -- Stop track if it's no longer playing on real player
-    for _, fTrack in ipairs(fakeAnimator:GetPlayingAnimationTracks()) do
-        local id = fTrack.Animation and fTrack.Animation.AnimationId
-        if id and not realMap[id] then 
-            fTrack:Stop(0.1) 
-        end
-    end  
-    
-    -- Mirror or play matching active animations
-    for id, track in pairs(realMap) do
-        local activeTrack = nil  
-        for _, fTrack in ipairs(fakeAnimator:GetPlayingAnimationTracks()) do
-            if fTrack.Animation and fTrack.Animation.AnimationId == id then
-                activeTrack = fTrack
+    for i = 1, #ghostTracks do
+        local gTrack = ghostTracks[i]
+        local isPlaying = false
+        for j = 1, #sourceTracks do
+            if sourceTracks[j].Animation.AnimationId == gTrack.Animation.AnimationId then
+                isPlaying = true
                 break
             end
-        end  
-        
-        if activeTrack then
-            activeTrack:AdjustSpeed(track.Speed)
-            -- Prevent snapping back and forth by checking threshold variance
-            if math.abs(activeTrack.TimePosition - track.TimePosition) > 0.05 then
-                activeTrack.TimePosition = track.TimePosition
-            end
-        else
-            local anim = Instance.new("Animation")
-            anim.AnimationId = id  
-            local success, newTrack = pcall(function() return fakeAnimator:LoadAnimation(anim) end)
-            if success and newTrack then
-                newTrack.Priority = track.Priority
-                newTrack:Play(0.1)
-                newTrack:AdjustSpeed(track.Speed)
-                newTrack.TimePosition = track.TimePosition
+        end
+        if not isPlaying then gTrack:Stop(0.1) end
+    end
+
+    for i = 1, #sourceTracks do
+        local sTrack = sourceTracks[i]
+        local gTrack
+        for j = 1, #ghostTracks do
+            local t = ghostTracks[j]
+            if t.Animation.AnimationId == sTrack.Animation.AnimationId then
+                gTrack = t
+                break
             end
         end
-    end  
+
+        if not gTrack then
+            gTrack = ghostAnimator:LoadAnimation(sTrack.Animation)
+            gTrack:Play(0.1)
+        end
+
+        gTrack.TimePosition = sTrack.TimePosition
+        gTrack:AdjustWeight(sTrack.WeightCurrent > 0 and sTrack.WeightCurrent or 1)
+        gTrack:AdjustSpeed(sTrack.Speed)
+    end
 end
 
------------------------------------------------------------
--- OPTIMIZED TARGET RETRIEVAL
------------------------------------------------------------
+local ghostCache = {} 
+local lastDodgeObject = nil
+local ignoreList = {} 
+local TweenService = game:GetService("TweenService")
+
+local function createEpitaphGhost(targetPlayer)
+    if ghostCache[targetPlayer] then return ghostCache[targetPlayer] end
+    
+    local sourceChar = targetPlayer.Character
+    if not sourceChar then return nil end
+
+    sourceChar.Archivable = true
+    local ghost = sourceChar:Clone()
+    sourceChar.Archivable = false
+    
+    ghost.Name = "Ghost" 
+    
+    local hum = ghost:FindFirstChildOfClass("Humanoid")
+    if hum then 
+        hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        hum.PlatformStand = true 
+    end
+
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = Color3.fromRGB(255, 0, 80)
+    highlight.FillTransparency = 0.4
+    highlight.Parent = ghost
+
+    local descendants = ghost:GetDescendants()
+    for i = 1, #descendants do
+        local item = descendants[i]
+        if item:IsA("LuaSourceContainer") or item:IsA("Sound") or item:IsA("BillboardGui") then
+            item:Destroy()
+        elseif item:IsA("BasePart") then
+            if item.Name == "HumanoidRootPart" then
+                item.Transparency = 1
+                item.Anchored = true 
+            else
+                item.Transparency = 0.7
+                item.Material = Enum.Material.Neon
+                item.Anchored = false 
+            end
+            item.CanCollide = false
+            item.CanTouch = false
+            item.CanQuery = false
+        end
+    end
+    
+    ghost.Parent = workspace
+    ghostCache[targetPlayer] = ghost
+    return ghost
+end
+
+local player = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+
+local function clearAllGhosts()
+    for p, g in pairs(ghostCache) do
+        if g then g:Destroy() end
+    end
+    table.clear(ghostCache)
+end
+
+local DETECTION_RADIUS = 50
+local DODGE_DISTANCE = 14
+local MIN_SPEED = 35 
+local PREDICTION_TIME = 0.7 
+local ANIM_ID = "rbxassetid://119594034834137"
+local SOUND_ID = "rbxassetid://123891403807633"
+local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/refs/heads/main/Glossy%20button%20(1).png"
+local FILE_NAME = "epitaph$3.png"
+
 local function updateIgnoreList()
     local newList = {player.Character}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character then table.insert(newList, p.Character) end
+    local allPlayers = Players:GetPlayers()
+    for i = 1, #allPlayers do
+        local p = allPlayers[i]
+        if p.Character then
+            table.insert(newList, p.Character)
+        end
     end
     local sc = workspace:FindFirstChild("KingCrimson")
     if sc then table.insert(newList, sc) end
@@ -281,19 +138,23 @@ local function updateIgnoreList()
 end
 
 Players.PlayerAdded:Connect(function(p) 
-    p.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if isActive then initializePlayerCache(p) end
-        updateIgnoreList()
-    end)
+    p.CharacterAdded:Connect(updateIgnoreList) 
 end)
 
 Players.PlayerRemoving:Connect(function(p)
-    removePlayerFromCache(p)
+    if ghostCache[p] then 
+        ghostCache[p]:Destroy() 
+        ghostCache[p] = nil 
+    end
     updateIgnoreList()
 end)
 
-task.spawn(function() while task.wait(5) do updateIgnoreList() end end)
+task.spawn(function() 
+    while true do
+        updateIgnoreList()
+        task.wait(5)
+    end
+end)
 
 local character, rootPart, humanoid
 local function updateCharacter(newCharacter)
@@ -301,48 +162,29 @@ local function updateCharacter(newCharacter)
     rootPart = character:WaitForChild("HumanoidRootPart", 5)
     humanoid = character:WaitForChild("Humanoid", 5)
     updateIgnoreList()
-    task.wait(0.5)
-    if isActive then initializePlayerCache(player) end
 end
 
 player.CharacterAdded:Connect(updateCharacter)
 if player.Character then updateCharacter(player.Character) end
 
------------------------------------------------------------
--- ASSET SETUP & DRAGGABLE GUI
------------------------------------------------------------
-local fileSuccessfullyWritten = false
 local success, content = pcall(function() return game:HttpGet(IMAGE_URL) end)
-if success and content then 
-    pcall(function()
-        writefile(FILE_NAME, content) 
-        fileSuccessfullyWritten = true
-    end)
-end
+if success then writefile(FILE_NAME, content) end
 
-local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "KingCrimsonDodge"
 screenGui.ResetOnSpawn = false 
+screenGui.Parent = player:WaitForChild("PlayerGui")
 
-local imageButton = Instance.new("ImageButton", screenGui)
+local imageButton = Instance.new("ImageButton")
 imageButton.Size = UDim2.new(0, 80, 0, 80)
-imageButton.Position = UDim2.new(0.5, -40, 0.8, -100) 
-imageButton.BackgroundTransparency = 0.3 
-imageButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+imageButton.Position = UDim2.new(0.5, -40, 0.8, 0)
+imageButton.BackgroundTransparency = 1
+imageButton.Image = getcustomasset(FILE_NAME)
+imageButton.Parent = screenGui
 
-if fileSuccessfullyWritten and typeof(getcustomasset) == "function" then
-    local assetSuccess, assetId = pcall(function() return getcustomasset(FILE_NAME) end)
-    if assetSuccess then imageButton.Image = assetId else imageButton.Image = "rbxassetid://12328246413" end
-else
-    imageButton.Image = "rbxassetid://12328246413" 
-end
-
-local uiCorner = Instance.new("UICorner", imageButton)
+local uiCorner = Instance.new("UICorner")
 uiCorner.CornerRadius = UDim.new(1, 0)
-
-local uiStroke = Instance.new("UIStroke", imageButton)
-uiStroke.Color = Color3.fromRGB(255, 0, 80)
-uiStroke.Thickness = 2
+uiCorner.Parent = imageButton
 
 local dragging, dragInput, dragStart, startPos
 local function updateDrag(input)
@@ -353,12 +195,18 @@ end
 imageButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging, dragStart, startPos = true, input.Position, imageButton.Position
-        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        input.Changed:Connect(function() 
+            if input.UserInputState == Enum.UserInputState.End then 
+                dragging = false 
+            end 
+        end)
     end
 end)
 
 imageButton.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
@@ -369,44 +217,37 @@ imageButton.MouseButton1Click:Connect(function()
     isActive = not isActive
     if isActive then
         imageButton.ImageColor3 = Color3.fromRGB(255, 100, 100)
-        uiStroke.Color = Color3.fromRGB(255, 255, 255)
-        
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p.Character then initializePlayerCache(p) end
-        end
-        viewportFrame.Visible = true
     else
         imageButton.ImageColor3 = Color3.fromRGB(255, 255, 255)
-        uiStroke.Color = Color3.fromRGB(255, 0, 80)
-        viewportFrame.Visible = false
         clearAllGhosts()
     end
 end)
 
------------------------------------------------------------
--- VISUALS & ANIMATIONS
------------------------------------------------------------
 local function playDodgeSound()
     if not rootPart then return end
-    local sound = Instance.new("Sound", rootPart)
+    local sound = Instance.new("Sound")
     sound.SoundId = SOUND_ID
     sound.Volume = 1
+    sound.Parent = rootPart
     sound:Play()
     sound.Ended:Connect(function() sound:Destroy() end)
 end
 
 local function createAfterImage()
     if not character then return end
-    local folder = Instance.new("Folder", workspace)
+    local folder = Instance.new("Folder")
     folder.Name = "DodgeGhost"
-    for _, part in ipairs(character:GetDescendants()) do
-        local itemName = part.Name:lower()
-        if part:IsA("BasePart") and part.Transparency < 1 and part.Name ~= "HumanoidRootPart" 
-           and not part:IsDescendantOf(character:FindFirstChildOfClass("Tool") or folder)
-           and not (itemName:find("foot") or itemName:find("print") or itemName:find("step")) then
+    folder.Parent = workspace
+    
+    local characterDescendants = character:GetDescendants()
+    for i = 1, #characterDescendants do
+        local part = characterDescendants[i]
+        if part:IsA("BasePart") and part.Transparency < 1 and part.Name ~= "HumanoidRootPart" then
             local ghost = Instance.new("Part")
             ghost.Size, ghost.CFrame, ghost.Anchored, ghost.CanCollide = part.Size, part.CFrame, true, false
-            ghost.Material, ghost.Color, ghost.Parent = Enum.Material.ForceField, Color3.fromRGB(255, 0, 0), folder
+            ghost.Material, ghost.Color = Enum.Material.ForceField, Color3.fromRGB(255, 0, 0)
+            ghost.Parent = folder
+            
             local m = part:FindFirstChildOfClass("SpecialMesh") or part:FindFirstChildOfClass("Mesh")
             if m then m:Clone().Parent = ghost end
             TweenService:Create(ghost, TweenInfo.new(0.5), {Transparency = 1}):Play()
@@ -435,102 +276,84 @@ local function getBestDodgeDirection(bulletVel, bulletPos)
     local up = Vector3.new(0, 1, 0)
     local right = bulletDir:Cross(up).Unit
     if right.Magnitude < 0.01 then right = Vector3.new(1, 0, 0) end
+    
     local left = -right
     local forward = rootPart.CFrame.LookVector
     
-    local directions = { {vec = left, side = -1}, {vec = right, side = 1}, {vec = forward, side = 0} }
+    local directions = {
+        {vec = left, side = -1},
+        {vec = right, side = 1},
+        {vec = forward, side = 0}
+    }
+    
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = ignoreList
     
     local validOptions = {}
-    for _, data in ipairs(directions) do
+
+    for i = 1, #directions do
+        local data = directions[i]
         local ray = workspace:Raycast(rootPart.Position, data.vec * DODGE_DISTANCE, params)
         local space = ray and (ray.Position - rootPart.Position).Magnitude or DODGE_DISTANCE
+        
         local potentialPos = rootPart.Position + (data.vec * (space - 1))
         local rel = potentialPos - bulletPos
-        local projection = rel:Dot(bulletDir)
-        local pathPoint = bulletPos + (bulletDir * projection)
+        local proj = rel:Dot(bulletDir)
+        local pathPoint = bulletPos + (bulletDir * proj)
         local safetyMargin = (potentialPos - pathPoint).Magnitude
 
-        if safetyMargin > 6 and space > 8 then table.insert(validOptions, {vec = data.vec, side = data.side, dist = space}) end
+        if safetyMargin > 6 and space > 8 then
+            table.insert(validOptions, {vec = data.vec, side = data.side, dist = space})
+        end
     end
     
     if #validOptions > 0 then
         local choice = validOptions[math.random(1, #validOptions)]
         return choice.vec, choice.side, math.max(4, choice.dist - 2)
     end
+    
     return right, 1, 6 
 end
 
------------------------------------------------------------
--- CORE HIGH-PERFORMANCE OPERATIONAL LOOP
------------------------------------------------------------
 RunService.Heartbeat:Connect(function(dt)
-    if not rootPart or not humanoid or humanoid.Health <= 0 then return end
+    if not isActive or not rootPart or not humanoid or humanoid.Health <= 0 then return end
     local myPos = rootPart.Position
 
-    -- 1. FIXED PREDICTION AND TRAIL
-    if isActive then
-        vCam.CFrame = CFrame.new(cam.CFrame.Position) * cam.CFrame.Rotation
-        vCam.FieldOfView = cam.FieldOfView
-
-        for _, otherPlayer in ipairs(Players:GetPlayers()) do
-            if otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                if not ghostCache[otherPlayer] or not trailCache[otherPlayer] then
-                    initializePlayerCache(otherPlayer)
-                end
-                
-                local ghost = ghostCache[otherPlayer]
-                local targetRP = otherPlayer.Character.HumanoidRootPart
-                
-                if ghost and ghost.PrimaryPart then
-                    local targetOffset = (otherPlayer == player) and Vector3.new(0, 0, 0) or (targetRP.AssemblyLinearVelocity * PREDICTION_TIME)
-                    local rawFuturePos = targetRP.Position + targetOffset
-                    
-                    local rayParams = RaycastParams.new()
-                    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                    rayParams.FilterDescendantsInstances = ignoreList
-                    
-                    local floorRay = workspace:Raycast(rawFuturePos + Vector3.new(0, 3, 0), Vector3.new(0, -15, 0), rayParams)
-                    local correctedPos = rawFuturePos
-                    
-                    if floorRay then
-                        local floorY = floorRay.Position.Y + (targetRP.Size.Y / 2) + 1.5
-                        if correctedPos.Y < floorY then correctedPos = Vector3.new(correctedPos.X, floorY, correctedPos.Z) end
-                    end
-                    
-                    local targetCFrame = CFrame.new(correctedPos) * targetRP.CFrame.Rotation
-                    local smoothlyBlendedCFrame = ghost:GetPivot():Lerp(targetCFrame, LERP_SMOOTHNESS)
-                    ghost:PivotTo(smoothlyBlendedCFrame)
-                    
-                    local targetHum = otherPlayer.Character:FindFirstChildOfClass("Humanoid")
-                    local ghostHum = ghost:FindFirstChildOfClass("Humanoid")
-                    if targetHum and ghostHum then syncAnimations(targetHum, ghostHum) end
-                    
-                    local currentTime = os.clock()
-                    if currentTime - lastUpdateTime[otherPlayer] >= UPDATE_TICK_RATE then
-                        updateTrailPositions(otherPlayer, smoothlyBlendedCFrame, ghost)
-                        lastUpdateTime[otherPlayer] = currentTime
-                    end
-                end
-            else
-                removePlayerFromCache(otherPlayer)
+    local currentPlayers = Players:GetPlayers()
+    for i = 1, #currentPlayers do
+        local otherPlayer = currentPlayers[i]
+        if otherPlayer ~= player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local targetRP = otherPlayer.Character.HumanoidRootPart
+            local ghost = createEpitaphGhost(otherPlayer)
+            
+            if ghost and ghost.PrimaryPart then
+                local futurePos = targetRP.Position + (targetRP.AssemblyLinearVelocity * PREDICTION_TIME)
+                ghost:SetPrimaryPartCFrame(CFrame.new(futurePos) * targetRP.CFrame.Rotation)
+                syncAnimations(otherPlayer.Character, ghost)
             end
+        elseif ghostCache[otherPlayer] then
+            ghostCache[otherPlayer]:Destroy()
+            ghostCache[otherPlayer] = nil
         end
     end
 
-    -- 2. HIGH-PERFORMANCE REGION3 PROJECTILE SCANNING
-    local nearbyParts = workspace:FindPartsInRegion3WithIgnoreList(
-        Region3.new(myPos - Vector3.new(DETECTION_RADIUS, DETECTION_RADIUS, DETECTION_RADIUS), myPos + Vector3.new(DETECTION_RADIUS, DETECTION_RADIUS, DETECTION_RADIUS)),
-        ignoreList,
-        100
-    )
+    local children = workspace:GetChildren()
+    for i = 1, #children do
+        local obj = children[i]
+        local shouldIgnore = false
+        for j = 1, #ignoreList do
+            local item = ignoreList[j]
+            if obj == item or obj:IsDescendantOf(item) then
+                shouldIgnore = true
+                break
+            end
+        end
+        if shouldIgnore then continue end
 
-    for _, obj in ipairs(nearbyParts) do
-        if obj:IsA("BasePart") and not obj.Anchored then
+        if obj:IsA("BasePart") then
             local dist = (myPos - obj.Position).Magnitude
-            if dist < DETECTION_RADIUS and obj ~= lastDodgeObject then
+            if dist < DETECTION_RADIUS then
                 local bv = obj:FindFirstChildOfClass("BodyVelocity") or obj:FindFirstChildOfClass("LinearVelocity")
                 local vel = bv and (bv:IsA("BodyVelocity") and bv.Velocity or bv.VectorVelocity) or obj.Velocity
                 
@@ -540,7 +363,7 @@ RunService.Heartbeat:Connect(function(dt)
                     vel = (obj.Position - last) / dt
                 end
 
-                if vel.Magnitude > MIN_SPEED then
+                if vel.Magnitude > MIN_SPEED and obj ~= lastDodgeObject then
                     local relPos = myPos - obj.Position
                     local projection = relPos:Dot(vel.Unit)
                     
@@ -556,7 +379,9 @@ RunService.Heartbeat:Connect(function(dt)
                             
                             rootPart.CFrame = rootPart.CFrame + (dodgeVec * moveDist)
 
-                            task.delay(0.2, function() if lastDodgeObject == obj then lastDodgeObject = nil end end)
+                            task.delay(0.2, function() 
+                                if lastDodgeObject == obj then lastDodgeObject = nil end 
+                            end)
                             break
                         end
                     end
@@ -567,7 +392,12 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 task.spawn(function()
-    while task.wait(5) do
-        for obj in pairs(posHistory) do if not obj or not obj.Parent then posHistory[obj] = nil end end
+    while true do
+        for obj in pairs(posHistory) do 
+            if not obj or not obj.Parent then 
+                posHistory[obj] = nil 
+            end 
+        end
+        task.wait(5)
     end
 end)
