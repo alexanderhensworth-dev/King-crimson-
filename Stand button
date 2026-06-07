@@ -1,24 +1,9 @@
---[[
-    KING CRIMSON - PERSISTENT UI VERSION
-    - Button position is now saved across resets/deaths
-    - UI is created once and reused (No more duplicate buttons)
-    - 93ms high-precision summon delay
-    - 1.32s repeat audio cutoff
-]]
-
-local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
-
--------------------------------------------------------------------
--- 1. PERSISTENT UI SETUP (Outside Initialize function)
--------------------------------------------------------------------
 local screenGui = player:WaitForChild("PlayerGui"):FindFirstChild("KC_Persistent_GUI") or Instance.new("ScreenGui")
 screenGui.Name = "KC_Persistent_GUI"
-screenGui.ResetOnSpawn = false -- CRITICAL: Prevents UI from deleting on death
+screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local imgBtn = screenGui:FindFirstChild("MainButton") or Instance.new("ImageButton")
@@ -30,18 +15,16 @@ if not imgBtn:IsDescendantOf(screenGui) then
     imgBtn.Parent = screenGui
 end
 
--- Shared Asset Logic
-local imageName = "KC_Icon_Final_Ghost.png"
-local imageUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_010006_0000-removebg-preview.png"
+local imageName = "Summonkcuwu.png"
+local imageUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/refs/heads/main/Glossy%20button%20(2).png"
 if not isfile(imageName) then writefile(imageName, game:HttpGet(imageUrl)) end
 imgBtn.Image = getcustomasset(imageName)
 
--- Persistent Dragging Logic
-local dragging = false
-local dragInput, dragStart, startPos
+local UserInputService = game:GetService("UserInputService")
+local dragging, dragInput, dragStart, startPos = false
 
 imgBtn.InputBegan:Connect(function(input)
-    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
         startPos = imgBtn.Position
@@ -52,7 +35,7 @@ imgBtn.InputBegan:Connect(function(input)
 end)
 
 imgBtn.InputChanged:Connect(function(input)
-    if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
         dragInput = input
     end
 end)
@@ -64,10 +47,8 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--------------------------------------------------------------------
--- 2. DYNAMIC CHARACTER LOGIC
--------------------------------------------------------------------
-local summonConnection = nil
+local camera = workspace.CurrentCamera
+local summonConnection
 
 local function InitializeKC(character)
     local rootPart = character:WaitForChild("HumanoidRootPart")
@@ -79,9 +60,29 @@ local function InitializeKC(character)
     local auraParticles = {} 
     local isSummoned = false
     local currentTransparency = 1
-    local lerpPos = Vector3.new(0, 0, 0)
+    local lerpPos = Vector3.zero
 
-    -- Audio Setup
+    local animate = character:WaitForChild("Animate", 5)
+    if animate then
+        local idle = animate:FindFirstChild("idle")
+        if idle then
+            local animationObject = idle:FindFirstChildOfClass("Animation")
+            if animationObject then
+                animationObject.AnimationId = "rbxassetid://116424266450220"
+                
+                -- Dynamic reload of the running animation tracks to apply the custom idle instantly
+                local animator = humanoid:FindFirstChildOfClass("Animator")
+                if animator then
+                    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                        if track.Name:lower():find("idle") then
+                            track:Stop(0.1)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     local audioName = "KC_Final_Sync_v5.mp3"
     local audioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/YTDown_Shorts_King-Crimson-anime-animeedit-amv-animeam_Media_jkFrDUvyVcc_008_128k.mp3"
     if not isfile(audioName) then writefile(audioName, game:HttpGet(audioUrl)) end
@@ -106,7 +107,7 @@ local function InitializeKC(character)
                 auraPart.Anchored, auraPart.Massless = false, true 
                 auraPart.Transparency = 1 
                 local search = auraPart.Name:lower():gsub(" ", "")
-                local target = nil
+                local target
                 for _, v in ipairs(targetModel:GetDescendants()) do
                     if v:IsA("BasePart") and not v:IsDescendantOf(Object) and v.Name:lower():gsub(" ", "") == search then
                         target = v break
@@ -128,7 +129,7 @@ local function InitializeKC(character)
         stand = game:GetObjects("rbxassetid://9647642088")[1]
         stand.Name = "KingCrimson"
         stand.Parent = camera 
-        local mainPart = nil
+        local mainPart
         ignoredParts = {}
         for _, part in ipairs(stand:GetDescendants()) do
             if part:IsA("BasePart") then
@@ -153,7 +154,6 @@ local function InitializeKC(character)
 
     CreateStand()
 
-    -- Disconnect old summon logic before rebinding to new character
     if summonConnection then summonConnection:Disconnect() end
     
     summonConnection = imgBtn.MouseButton1Click:Connect(function()
@@ -179,17 +179,18 @@ local function InitializeKC(character)
         end
     end)
 
+    local RunService = game:GetService("RunService")
     local connection
     connection = RunService.RenderStepped:Connect(function()
         if not character or not character.Parent or humanoid.Health <= 0 then
             if stand then stand:Destroy() end
             connection:Disconnect()
-            imgBtn.ImageColor3 = Color3.new(1, 1, 1) -- Reset color on death
+            imgBtn.ImageColor3 = Color3.new(1, 1, 1)
             return 
         end
 
         local targetAlpha = isSummoned and 0 or 1
-        local targetOffset = isSummoned and Vector3.new(0, 1.8, 2.5) or Vector3.new(0, 0, 0)
+        local targetOffset = isSummoned and Vector3.new(0, 1.8, 2.5) or Vector3.zero
         
         currentTransparency = math.lerp(currentTransparency, targetAlpha, 0.35)
         lerpPos = lerpPos:Lerp(targetOffset, 0.25)
@@ -212,4 +213,3 @@ end
 
 player.CharacterAdded:Connect(InitializeKC)
 if player.Character then InitializeKC(player.Character) end
-
