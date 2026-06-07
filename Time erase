@@ -1,37 +1,16 @@
 local Players = game:GetService("Players")  
-local RunService = game:GetService("RunService")  
-local TweenService = game:GetService("TweenService")  
-local UserInputService = game:GetService("UserInputService")
-
 local player = Players.LocalPlayer  
 local cam = workspace.CurrentCamera  
 
 local jumpCount = 0
-local jumpConnection = nil
-local infiniteJumpConn = nil
+local jumpConnection
+local infiniteJumpConn
 local timeEraseActive = false
 
--- Button image
 local btnUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/refs/heads/main/Glossy%20button.png"
 local btnFile = "NewButtonKC.png"
 if not isfile(btnFile) then writefile(btnFile, game:HttpGet(btnUrl)) end
 local btnAsset = getcustomasset(btnFile)
-
--- Audio files
-local startAudioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/screen-20260606-1119222.mp3"
-local startAudioFile = "kc_start_sfx.mp3"
-if not isfile(startAudioFile) then writefile(startAudioFile, game:HttpGet(startAudioUrl)) end
-local startAudioAsset = getcustomasset(startAudioFile)
-
-local themeAudioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/JOJO%27s%20Bizarre%20Adventure%20Golden%20Wind%20OST%20-%20Un%27altra%20persona%20%28Boss%27s%20theme%29.mp3"
-local themeAudioFile = "kc_theme_sfx.mp3"
-if not isfile(themeAudioFile) then writefile(themeAudioFile, game:HttpGet(themeAudioUrl)) end
-local themeAudioAsset = getcustomasset(themeAudioFile)
-
-local endAudioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/screen-20260606-1119223.mp3"
-local endAudioFile = "kc_end_sfx.mp3"
-if not isfile(endAudioFile) then writefile(endAudioFile, game:HttpGet(endAudioUrl)) end
-local endAudioAsset = getcustomasset(endAudioFile)
 
 local mainGui = Instance.new("ScreenGui")
 mainGui.Name = "KCToggleGui"
@@ -39,46 +18,48 @@ mainGui.ResetOnSpawn = false
 mainGui.IgnoreGuiInset = true
 mainGui.Parent = player:WaitForChild("PlayerGui")
 
-local activateBtn = Instance.new("ImageButton")
-activateBtn.Name = "ActivateButton"
-activateBtn.AnchorPoint = Vector2.new(0.5, 0.5)
-activateBtn.Position = UDim2.new(0.85, 0, 0.85, 0)
-activateBtn.Size = UDim2.new(0, 85, 0, 85)
-activateBtn.BackgroundTransparency = 1
-activateBtn.Image = btnAsset
-activateBtn.Parent = mainGui
+local btn = Instance.new("ImageButton")
+btn.Name = "ActivateButton"
+btn.AnchorPoint = Vector2.new(0.5, 0.5)
+btn.Position = UDim2.new(0.85, 0, 0.85, 0)
+btn.Size = UDim2.new(0, 85, 0, 85)
+btn.BackgroundTransparency = 1
+btn.Image = btnAsset
+btn.Parent = mainGui
 
 local dragging, dragInput, dragStart, startPos
+local uis = game:GetService("UserInputService")
+
 local function update(input)
     local delta = input.Position - dragStart
-    activateBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    btn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
 
-activateBtn.InputBegan:Connect(function(input)
+btn.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
-        startPos = activateBtn.Position
+        startPos = btn.Position
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then dragging = false end
         end)
     end
 end)
 
-activateBtn.InputChanged:Connect(function(input)
+btn.InputChanged:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
         dragInput = input
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
+uis.InputChanged:Connect(function(input)
     if input == dragInput and dragging then update(input) end
 end)
 
 local effectActive = false
-local endEffectCallback = nil
+local endEffectCallback
 
-activateBtn.MouseButton1Click:Connect(function()
+btn.MouseButton1Click:Connect(function()
     if effectActive then
         if endEffectCallback then endEffectCallback() end
         return
@@ -89,18 +70,17 @@ activateBtn.MouseButton1Click:Connect(function()
     local char = player.Character
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
     local rootPart = char and char:FindFirstChild("HumanoidRootPart")
-
     if not char or not humanoid or not rootPart then return end
 
     effectActive = true
     timeEraseActive = true
-    local currentSeat = nil
+    local currentSeat
 
-    local originalWalkSpeed = humanoid.WalkSpeed
-    local originalJumpPower = humanoid.JumpPower
-    local originalUseJumpPower = humanoid.UseJumpPower
+    local origWS = humanoid.WalkSpeed
+    local origJP = humanoid.JumpPower
+    local origUJP = humanoid.UseJumpPower
 
-    humanoid.WalkSpeed = originalWalkSpeed * 1.3
+    humanoid.WalkSpeed = origWS * 1.3
     humanoid.UseJumpPower = true
     humanoid.JumpPower = 70
 
@@ -117,24 +97,38 @@ activateBtn.MouseButton1Click:Connect(function()
     local originalOcclusion = player.DevCameraOcclusionMode
     local originalMaxZoom = player.CameraMaxZoomDistance
 
-    local SoundService = game:GetService("SoundService")
+    local startAudioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/screen-20260606-1119222.mp3"
+    local startAudioFile = "kc_start_sfx.mp3"
+    if not isfile(startAudioFile) then writefile(startAudioFile, game:HttpGet(startAudioUrl)) end
+    local startAudioAsset = getcustomasset(startAudioFile)
 
-    local startSound = Instance.new("Sound", SoundService)
+    local themeAudioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/JOJO%27s%20Bizarre%20Adventure%20Golden%20Wind%20OST%20-%20Un%27altra%20persona%20%28Boss%27s%20theme%29.mp3"
+    local themeAudioFile = "kc_theme_sfx.mp3"
+    if not isfile(themeAudioFile) then writefile(themeAudioFile, game:HttpGet(themeAudioUrl)) end
+    local themeAudioAsset = getcustomasset(themeAudioFile)
+
+    local endAudioUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/screen-20260606-1119223.mp3"
+    local endAudioFile = "kc_end_sfx.mp3"
+    if not isfile(endAudioFile) then writefile(endAudioFile, game:HttpGet(endAudioUrl)) end
+    local endAudioAsset = getcustomasset(endAudioFile)
+
+    local sServ = game:GetService("SoundService")
+    local startSound = Instance.new("Sound", sServ)
     startSound.SoundId = startAudioAsset
     startSound.Volume = 2
 
-    local themeSound = Instance.new("Sound", SoundService)
+    local themeSound = Instance.new("Sound", sServ)
     themeSound.SoundId = themeAudioAsset
     themeSound.Volume = 1.5
     themeSound.Looped = true
 
-    local endSound = Instance.new("Sound", SoundService)
+    local endSound = Instance.new("Sound", sServ)
     endSound.SoundId = endAudioAsset
     endSound.Volume = 2
 
     local screenX = cam.ViewportSize.X
     local screenY = cam.ViewportSize.Y
-    local targetDiameter = math.sqrt(screenX^2 + screenY^2) * 1.1
+    local diam = math.sqrt(screenX^2 + screenY^2) * 1.1
 
     local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
     gui.IgnoreGuiInset = true
@@ -146,56 +140,22 @@ activateBtn.MouseButton1Click:Connect(function()
     local galaxyTexture = getcustomasset(galaxyFile)
 
     local maskH = Instance.new("Frame", gui)
-    maskH.AnchorPoint = Vector2.new(0.5, 0.5)
-    maskH.Position = UDim2.fromScale(0.5, 0.5)
-    maskH.Size = UDim2.fromOffset(0, 0)
-    maskH.BackgroundTransparency = 1
-    maskH.ClipsDescendants = true
-    maskH.ZIndex = 1
+    maskH.AnchorPoint, maskH.Position, maskH.Size, maskH.BackgroundTransparency, maskH.ClipsDescendants, maskH.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), UDim2.fromOffset(0, 0), 1, true, 1
 
     local bgH = Instance.new("ImageLabel", maskH)
-    bgH.AnchorPoint = Vector2.new(0.5, 0.5)
-    bgH.Position = UDim2.fromScale(0.5, 0.5)
-    bgH.Size = UDim2.fromOffset(screenX, screenY)
-    bgH.BackgroundTransparency = 1
-    bgH.Image = galaxyTexture
-    bgH.ScaleType = Enum.ScaleType.Stretch
-    bgH.ZIndex = 1
+    bgH.AnchorPoint, bgH.Position, bgH.Size, bgH.BackgroundTransparency, bgH.Image, bgH.ScaleType, bgH.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), UDim2.fromOffset(screenX, screenY), 1, galaxyTexture, Enum.ScaleType.Stretch, 1
 
     local viewportH = Instance.new("ViewportFrame", maskH)
-    viewportH.AnchorPoint = Vector2.new(0.5, 0.5)
-    viewportH.Position = UDim2.fromScale(0.5, 0.5)
-    viewportH.Size = UDim2.fromOffset(screenX, screenY)
-    viewportH.BackgroundTransparency = 1
-    viewportH.ZIndex = 2
-    viewportH.Ambient = Color3.fromRGB(40, 0, 60)
-    viewportH.LightColor = Color3.fromRGB(120, 60, 180)
+    viewportH.AnchorPoint, viewportH.Position, viewportH.Size, viewportH.BackgroundTransparency, viewportH.ZIndex, viewportH.Ambient, viewportH.LightColor = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), UDim2.fromOffset(screenX, screenY), 1, 2, Color3.fromRGB(40, 0, 60), Color3.fromRGB(120, 60, 180)
 
     local maskV = Instance.new("Frame", gui)
-    maskV.AnchorPoint = Vector2.new(0.5, 0.5)
-    maskV.Position = UDim2.fromScale(0.5, 0.5)
-    maskV.Size = UDim2.fromOffset(0, 0)
-    maskV.BackgroundTransparency = 1
-    maskV.ClipsDescendants = true
-    maskV.ZIndex = 1
+    maskV.AnchorPoint, maskV.Position, maskV.Size, maskV.BackgroundTransparency, maskV.ClipsDescendants, maskV.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), UDim2.fromOffset(0, 0), 1, true, 1
 
     local bgV = Instance.new("ImageLabel", maskV)
-    bgV.AnchorPoint = Vector2.new(0.5, 0.5)
-    bgV.Position = UDim2.fromScale(0.5, 0.5)
-    bgV.Size = UDim2.fromOffset(screenX, screenY)
-    bgV.BackgroundTransparency = 1
-    bgV.Image = galaxyTexture
-    bgV.ScaleType = Enum.ScaleType.Stretch
-    bgV.ZIndex = 1
+    bgV.AnchorPoint, bgV.Position, bgV.Size, bgV.BackgroundTransparency, bgV.Image, bgV.ScaleType, bgV.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), UDim2.fromOffset(screenX, screenY), 1, galaxyTexture, Enum.ScaleType.Stretch, 1
 
     local viewportV = Instance.new("ViewportFrame", maskV)
-    viewportV.AnchorPoint = Vector2.new(0.5, 0.5)
-    viewportV.Position = UDim2.fromScale(0.5, 0.5)
-    viewportV.Size = UDim2.fromOffset(screenX, screenY)
-    viewportV.BackgroundTransparency = 1
-    viewportV.ZIndex = 2
-    viewportV.Ambient = Color3.fromRGB(40, 0, 60)
-    viewportV.LightColor = Color3.fromRGB(120, 60, 180)
+    viewportV.AnchorPoint, viewportV.Position, viewportV.Size, viewportV.BackgroundTransparency, viewportV.ZIndex, viewportV.Ambient, viewportV.LightColor = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), UDim2.fromOffset(screenX, screenY), 1, 2, Color3.fromRGB(40, 0, 60), Color3.fromRGB(120, 60, 180)
 
     local world = Instance.new("WorldModel", viewportH)
     local vcam = Instance.new("Camera", viewportH)
@@ -206,12 +166,10 @@ activateBtn.MouseButton1Click:Connect(function()
     viewportV.CurrentCamera = vcamV
 
     local cc = Instance.new("ColorCorrectionEffect", viewportH)
-    cc.Brightness, cc.Contrast, cc.Saturation = -0.25, 0.45, -0.65
-    cc.TintColor = Color3.fromRGB(180, 120, 255)
+    cc.Brightness, cc.Contrast, cc.Saturation, cc.TintColor = -0.25, 0.45, -0.65, Color3.fromRGB(180, 120, 255)
 
     local ccV = Instance.new("ColorCorrectionEffect", viewportV)
-    ccV.Brightness, ccV.Contrast, ccV.Saturation = -0.25, 0.45, -0.65
-    ccV.TintColor = Color3.fromRGB(180, 120, 255)
+    ccV.Brightness, ccV.Contrast, ccV.Saturation, ccV.TintColor = -0.25, 0.45, -0.65, Color3.fromRGB(180, 120, 255)
 
     local function syncAnimations(realHum, fakeHum)
         if not realHum or not fakeHum then return end
@@ -329,6 +287,7 @@ activateBtn.MouseButton1Click:Connect(function()
     buildCubes(worldV, rotatingCubesV)
 
     local isActive = true
+    local ts = game:GetService("TweenService")
 
     local function endEffect()
         if not isActive then return end
@@ -341,9 +300,9 @@ activateBtn.MouseButton1Click:Connect(function()
         if infiniteJumpConn then infiniteJumpConn:Disconnect(); infiniteJumpConn = nil end
 
         if humanoid then
-            humanoid.WalkSpeed = originalWalkSpeed
-            humanoid.JumpPower = originalJumpPower
-            humanoid.UseJumpPower = originalUseJumpPower
+            humanoid.WalkSpeed = origWS
+            humanoid.JumpPower = origJP
+            humanoid.UseJumpPower = origUJP
         end
 
         player.DevCameraOcclusionMode = originalOcclusion
@@ -355,15 +314,14 @@ activateBtn.MouseButton1Click:Connect(function()
         if not endSound.IsLoaded then endSound.Loaded:Wait() end
         endSound:Play()
 
-        -- Reverse plus close
         local unplusInfo = TweenInfo.new(0.5, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
-        TweenService:Create(maskH, unplusInfo, {Size = UDim2.fromOffset(targetDiameter, 6)}):Play()
-        TweenService:Create(maskV, unplusInfo, {Size = UDim2.fromOffset(6, targetDiameter)}):Play()
+        ts:Create(maskH, unplusInfo, {Size = UDim2.fromOffset(diam, 6)}):Play()
+        ts:Create(maskV, unplusInfo, {Size = UDim2.fromOffset(6, diam)}):Play()
         task.wait(0.45)
 
         local closeInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-        TweenService:Create(maskH, closeInfo, {Size = UDim2.fromOffset(0, 0)}):Play()
-        local closeTween = TweenService:Create(maskV, closeInfo, {Size = UDim2.fromOffset(0, 0)})
+        ts:Create(maskH, closeInfo, {Size = UDim2.fromOffset(0, 0)}):Play()
+        local closeTween = ts:Create(maskV, closeInfo, {Size = UDim2.fromOffset(0, 0)})
         closeTween:Play()
         closeTween.Completed:Wait()
 
@@ -381,7 +339,7 @@ activateBtn.MouseButton1Click:Connect(function()
 
     endEffectCallback = endEffect
 
-    infiniteJumpConn = UserInputService.JumpRequest:Connect(function()
+    infiniteJumpConn = uis.JumpRequest:Connect(function()
         if isActive and humanoid then
             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
         end
@@ -417,7 +375,7 @@ activateBtn.MouseButton1Click:Connect(function()
         end
     end
 
-    local sequenceThread = task.spawn(function()
+    task.spawn(function()
         if not startSound.IsLoaded then startSound.Loaded:Wait() end
         startSound:Play()
 
@@ -441,18 +399,18 @@ activateBtn.MouseButton1Click:Connect(function()
         task.wait(0.01)
 
         local shootInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        TweenService:Create(maskH, shootInfo, {Size = UDim2.fromOffset(targetDiameter, 6)}):Play()
-        TweenService:Create(maskV, shootInfo, {Size = UDim2.fromOffset(6, targetDiameter)}):Play()
+        ts:Create(maskH, shootInfo, {Size = UDim2.fromOffset(diam, 6)}):Play()
+        ts:Create(maskV, shootInfo, {Size = UDim2.fromOffset(6, diam)}):Play()
         task.wait(0.3)
 
         local plusInfo = TweenInfo.new(0.5, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
-        TweenService:Create(maskH, plusInfo, {Size = UDim2.fromOffset(targetDiameter, screenY * 0.38)}):Play()
-        TweenService:Create(maskV, plusInfo, {Size = UDim2.fromOffset(screenX * 0.38, targetDiameter)}):Play()
+        ts:Create(maskH, plusInfo, {Size = UDim2.fromOffset(diam, screenY * 0.38)}):Play()
+        ts:Create(maskV, plusInfo, {Size = UDim2.fromOffset(screenX * 0.38, diam)}):Play()
         task.wait(0.45)
 
         local fullInfo = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        TweenService:Create(maskH, fullInfo, {Size = UDim2.fromOffset(targetDiameter, targetDiameter)}):Play()
-        TweenService:Create(maskV, fullInfo, {Size = UDim2.fromOffset(targetDiameter, targetDiameter)}):Play()
+        ts:Create(maskH, fullInfo, {Size = UDim2.fromOffset(diam, diam)}):Play()
+        ts:Create(maskV, fullInfo, {Size = UDim2.fromOffset(diam, diam)}):Play()
         task.wait(0.7)
 
         if startSound.IsPlaying then startSound.Ended:Wait() end
@@ -463,7 +421,9 @@ activateBtn.MouseButton1Click:Connect(function()
     end)
 
     local npcSyncCounter = 0
+    local RunService = game:GetService("RunService")
     local renderConn
+    
     renderConn = RunService.RenderStepped:Connect(function()
         if not isActive then renderConn:Disconnect() return end
 
