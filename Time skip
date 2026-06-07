@@ -1,153 +1,128 @@
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
+local plr = Players.LocalPlayer
 
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local rootPart = character:WaitForChild("HumanoidRootPart")
+local img = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/Glossy%20button%20(3).png"
+local fName = "dodgeicon3.png" 
 
--- // Configuration
-local DISTANCE = 20
-local GHOST_DURATION = 0.35
-local COOLDOWN = 2
-local canDash = true
-local SOUND_ID = "rbxassetid://123891403807633"
-local IMAGE_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/1_20260503_005901_0000-removebg-preview.png"
-local VIDEO_URL = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/chroma-keyed-video%20(1).webm"
-local FILE_NAME = "DodgeIcon.png"
-local VIDEO_FILE = "EraseEffect.webm"
-local AFTERIMAGE_COLOR = Color3.fromRGB(255, 0, 0)
-
--- // Asset Handling with Error Printing
-local function loadAsset(fileName, url)    
-    local success, content = pcall(readfile, fileName)
-    if not success then
-        print("File not found, downloading: " .. fileName)
-        local dlSuccess, dlContent = pcall(function() return game:HttpGet(url) end)
-        if dlSuccess then
-            writefile(fileName, dlContent)
-            print("Successfully downloaded: " .. fileName)
+local function loadAsset(f, url)    
+    local s, res = pcall(readfile, f)
+    if not s then
+        print("no file, downloading... " .. f)
+        local dls, dlContent = pcall(function() return game:HttpGet(url) end)
+        if dls then
+            writefile(f, dlContent)
+            print("got it")
         else
-            print("ERROR: Failed to download " .. fileName .. " | " .. tostring(dlContent))
+            print("failed download: " .. tostring(dlContent))
             return ""
         end
     end
-    return getcustomasset(fileName)
+    return getcustomasset(f)
 end
 
--- // Core Setup
-local cloneref = cloneref or function(o) return o end
-local coregui = cloneref(game:GetService("CoreGui"))
-local parentTarget = coregui or player:WaitForChild("PlayerGui")
+local coregui = (cloneref or function(o) return o end)(game:GetService("CoreGui"))
+local parent = coregui or plr:WaitForChild("PlayerGui")
 
--- // UI Creation
-local gui = Instance.new("ScreenGui", parentTarget)
+local gui = Instance.new("ScreenGui", parent)
 gui.Name = "TeleportGui"
 gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 10
 
--- Video Frame
-local videoFrame = Instance.new("VideoFrame", gui)
-videoFrame.Name = "EraseVideo"
-videoFrame.BackgroundTransparency = 1
-videoFrame.Size = UDim2.new(1, 0, 1, 0)
-videoFrame.Position = UDim2.new(0, 0, 0, 0)
-videoFrame.Visible = false
-videoFrame.Volume = 0
-videoFrame.Looped = false
-videoFrame.ZIndex = 1
+local vf = Instance.new("VideoFrame", gui)
+vf.Name = "EraseVideo"
+vf.BackgroundTransparency = 1
+vf.Size = UDim2.new(1, 0, 1, 0)
+vf.Visible = false
+vf.Volume = 0
+vf.ZIndex = 1
 
--- Load Assets
-videoFrame.Video = loadAsset(VIDEO_FILE, VIDEO_URL)
+local vidUrl = "https://raw.githubusercontent.com/alexanderhensworth-dev/King-crimson-/main/chroma-keyed-video%20(1).webm"
+vf.Video = loadAsset("EraseEffect.webm", vidUrl)
 
-local imageButton = Instance.new("ImageButton", gui)
-imageButton.Name = "DodgeButton"
-imageButton.Size = UDim2.new(0, 80, 0, 80)
-imageButton.Position = UDim2.new(0.85, 0, 0.75, 0)
-imageButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-imageButton.BackgroundTransparency = 0.3
-imageButton.Image = loadAsset(FILE_NAME, IMAGE_URL)
-imageButton.ScaleType = Enum.ScaleType.Fit
-imageButton.BorderSizePixel = 0
-imageButton.ZIndex = 10
+local btn = Instance.new("ImageButton", gui)
+btn.Name = "DodgeButton"
+btn.Size = UDim2.new(0, 80, 0, 80)
+btn.Position = UDim2.new(0.85, 0, 0.75, 0)
+btn.BackgroundTransparency = 1 
+btn.Image = loadAsset(fName, img)
+btn.ScaleType = Enum.ScaleType.Fit
+btn.BorderSizePixel = 0
+btn.ZIndex = 10
 
-local uiCorner = Instance.new("UICorner", imageButton)
-uiCorner.CornerRadius = UDim.new(1, 0)
+local drag, dStart, sPos
+local uis = game:GetService("UserInputService")
 
--- // Draggable Logic
-local dragging, dragStart, startPos
-imageButton.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		startPos = imageButton.Position
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+btn.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+		drag = true
+		dStart = i.Position
+		sPos = btn.Position
+		i.Changed:Connect(function()
+			if i.UserInputState == Enum.UserInputState.End then drag = false end
 		end)
 	end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-		local delta = input.Position - dragStart
-		imageButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+uis.InputChanged:Connect(function(i)
+	if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+		local delta = i.Position - dStart
+		btn.Position = UDim2.new(sPos.X.Scale, sPos.X.Offset + delta.X, sPos.Y.Scale, sPos.Y.Offset + delta.Y)
 	end
 end)
 
--- // VFX Functions
-local function createAfterImage(sourceChar)
-	sourceChar.Archivable = true
-	local clone = sourceChar:Clone()
-	sourceChar.Archivable = false
-	for _, obj in ipairs(clone:GetDescendants()) do
-		if obj:IsA("BasePart") then
-			obj.Anchored, obj.CanCollide, obj.Material, obj.Color = true, false, Enum.Material.ForceField, AFTERIMAGE_COLOR
-		elseif obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("Sound") then
-			obj:Destroy()
+local ts = game:GetService("TweenService")
+local cd = false
+
+local function createAfterImage(char)
+	char.Archivable = true
+	local cl = char:Clone()
+	char.Archivable = false
+	for _, o in ipairs(cl:GetDescendants()) do
+		if o:IsA("BasePart") then
+			o.Anchored, o.CanCollide, o.Material, o.Color = true, false, Enum.Material.ForceField, Color3.fromRGB(255, 0, 0)
+		elseif o:IsA("Script") or o:IsA("LocalScript") or o:IsA("Sound") then
+			o:Destroy()
 		end
 	end
-	clone.Parent = workspace
-	for _, obj in ipairs(clone:GetDescendants()) do
-		if obj:IsA("BasePart") or obj:IsA("Decal") then
-			TweenService:Create(obj, TweenInfo.new(GHOST_DURATION), {Transparency = 1}):Play()
+	cl.Parent = workspace
+	for _, o in ipairs(cl:GetDescendants()) do
+		if o:IsA("BasePart") or o:IsA("Decal") then
+			ts:Create(o, TweenInfo.new(0.35), {Transparency = 1}):Play()
 		end
 	end
-	task.delay(GHOST_DURATION, function() clone:Destroy() end)
+	task.delay(0.35, function() cl:Destroy() end)
 end
 
--- // Trigger
-imageButton.Activated:Connect(function()
-	if not canDash then return end
-	canDash = false
+btn.Activated:Connect(function()
+	if cd then return end
+	local char = plr.Character if not char then return end
+	local root = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChild("Humanoid")
+	if not root or not hum or hum.Health <= 0 then return end
 	
-	-- Play Sound
-	local sound = Instance.new("Sound", rootPart)
-	sound.SoundId = SOUND_ID
+	cd = true
+	
+	local sound = Instance.new("Sound", root)
+	sound.SoundId = "rbxassetid://123891403807633"
 	sound:Play()
 	sound.Ended:Connect(function() sound:Destroy() end)
 	
-	createAfterImage(character)
-	
-	-- Teleport
-	rootPart.CFrame = rootPart.CFrame + (rootPart.CFrame.LookVector * DISTANCE)
+	createAfterImage(char)
+	root.CFrame = root.CFrame + (root.CFrame.LookVector * 20)
 
-	-- Play Video
-	videoFrame.Visible = true
-	videoFrame.TimePosition = 0
-	videoFrame:Play()
+	vf.Visible = true
+	vf.TimePosition = 0
+	vf:Play()
 	
 	task.delay(1.2, function()
-		videoFrame:Pause()
-		videoFrame.Visible = false
+		vf:Pause()
+		vf.Visible = false
 	end)
 	
-	-- UI Feedback
-	imageButton:TweenSize(UDim2.new(0, 70, 0, 70), "Out", "Quad", 0.1, true)
-	task.delay(0.1, function()
-		imageButton:TweenSize(UDim2.new(0, 80, 0, 80), "Out", "Quad", 0.1, true)
-	end)
+	btn:TweenSize(UDim2.new(0, 70, 0, 70), "Out", "Quad", 0.1, true)
+	task.delay(0.1, function() btn:TweenSize(UDim2.new(0, 80, 0, 80), "Out", "Quad", 0.1, true) end)
 	
-	task.wait(COOLDOWN)
-	canDash = true
+	task.wait(2)
+	cd = false
 end)
