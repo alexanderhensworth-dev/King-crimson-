@@ -188,7 +188,9 @@ btn.MouseButton1Click:Connect(function()
         end
         for id, track in pairs(realMap) do
             if fakeMap[id] then
-                fakeMap[id]:AdjustSpeed(track.Speed)
+                if math.abs(fakeMap[id].Speed - track.Speed) > 0.05 then
+                    fakeMap[id]:AdjustSpeed(track.Speed)
+                end
             else
                 local anim = Instance.new("Animation")
                 anim.AnimationId = id
@@ -231,60 +233,86 @@ btn.MouseButton1Click:Connect(function()
     local fakePlayersV, fakeNPCsV = {}, {}
 
     local startPosPos = currentPivot.Position
-    local GRID_SIZE, CELL_SIZE = 600, 40
+    local GRID_SIZE, CELL_SIZE = 400, 80
 
-    local function buildGrid(targetWorld)
+    -- Batched, fading grid builder — spawns 4 lines per frame, fades each in
+    local function buildGridAsync(targetWorld)
+        local lines = {}
         for x = -GRID_SIZE, GRID_SIZE, CELL_SIZE do
-            local p = Instance.new("Part", targetWorld)
-            p.Anchored, p.CanCollide, p.Size = true, false, Vector3.new(0.05, 0.05, GRID_SIZE * 2)
-            p.Material, p.Color, p.Transparency = Enum.Material.Neon, Color3.new(1,1,1), 0.5
-            p.CFrame = CFrame.new(startPosPos.X + x, startPosPos.Y - 3, startPosPos.Z)
+            table.insert(lines, {axis = "X", val = x})
         end
         for z = -GRID_SIZE, GRID_SIZE, CELL_SIZE do
-            local p = Instance.new("Part", targetWorld)
-            p.Anchored, p.CanCollide, p.Size = true, false, Vector3.new(GRID_SIZE * 2, 0.05, 0.05)
-            p.Material, p.Color, p.Transparency = Enum.Material.Neon, Color3.new(1,1,1), 0.5
-            p.CFrame = CFrame.new(startPosPos.X, startPosPos.Y - 3, startPosPos.Z + z)
+            table.insert(lines, {axis = "Z", val = z})
         end
-    end
 
-    buildGrid(world)
-    buildGrid(worldV)
+        task.spawn(function()
+            local ts = game:GetService("TweenService")
+            local BATCH = 4
+            for i, line in ipairs(lines) do
+                local p = Instance.new("Part", targetWorld)
+                p.Anchored, p.CanCollide = true, false
+                p.Material, p.Color = Enum.Material.Neon, Color3.new(1,1,1)
+                p.Transparency = 1 -- start invisible
+                if line.axis == "X" then
+                    p.Size = Vector3.new(0.05, 0.05, GRID_SIZE * 2)
+                    p.CFrame = CFrame.new(startPosPos.X + line.val, startPosPos.Y - 3, startPosPos.Z)
+                else
+                    p.Size = Vector3.new(GRID_SIZE * 2, 0.05, 0.05)
+                    p.CFrame = CFrame.new(startPosPos.X, startPosPos.Y - 3, startPosPos.Z + line.val)
+                end
+                -- fade in to target transparency
+                ts:Create(p, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.5}):Play()
+                if i % BATCH == 0 then
+                    task.wait()
+                end
+            end
+        end)
+    end
 
     local rotatingCubes = {}
     local rotatingCubesV = {}
 
-    local function buildCubes(targetWorld, cubeTable)
-        for i = 1, 60 do
-            local cSize, thick = math.random(5, 20), 0.1
-            local centerPos = startPosPos + Vector3.new(math.random(-400, 400), math.random(-400, 400), math.random(-400, 400))
-            local cubeModel = Instance.new("Model", targetWorld)
-            local edges = {
-                {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, cSize/2)},
-                {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, cSize/2)},
-                {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, -cSize/2)},
-                {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, -cSize/2)},
-                {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, cSize/2)},
-                {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, cSize/2)},
-                {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, -cSize/2)},
-                {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, -cSize/2)},
-                {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, cSize/2, 0)},
-                {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, cSize/2, 0)},
-                {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, -cSize/2, 0)},
-                {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, -cSize/2, 0)}
-            }
-            for _, d in ipairs(edges) do
-                local p = Instance.new("Part", cubeModel)
-                p.Size, p.Position, p.Anchored, p.CanCollide = d[1], centerPos + d[2], true, false
-                p.Material, p.Color, p.Transparency = Enum.Material.Neon, Color3.new(1,1,1), 0.2
+    -- Batched, fading cube builder — spawns 1 cube per frame, edges fade in
+    local function buildCubesAsync(targetWorld, cubeTable)
+        task.spawn(function()
+            local ts = game:GetService("TweenService")
+            for i = 1, 20 do
+                local cSize, thick = math.random(5, 20), 0.1
+                local centerPos = startPosPos + Vector3.new(math.random(-400, 400), math.random(-400, 400), math.random(-400, 400))
+                local cubeModel = Instance.new("Model", targetWorld)
+                local edges = {
+                    {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, cSize/2)},
+                    {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, cSize/2)},
+                    {Vector3.new(cSize, thick, thick), Vector3.new(0, cSize/2, -cSize/2)},
+                    {Vector3.new(cSize, thick, thick), Vector3.new(0, -cSize/2, -cSize/2)},
+                    {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, cSize/2)},
+                    {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, cSize/2)},
+                    {Vector3.new(thick, cSize, thick), Vector3.new(cSize/2, 0, -cSize/2)},
+                    {Vector3.new(thick, cSize, thick), Vector3.new(-cSize/2, 0, -cSize/2)},
+                    {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, cSize/2, 0)},
+                    {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, cSize/2, 0)},
+                    {Vector3.new(thick, thick, cSize), Vector3.new(cSize/2, -cSize/2, 0)},
+                    {Vector3.new(thick, thick, cSize), Vector3.new(-cSize/2, -cSize/2, 0)}
+                }
+                for _, d in ipairs(edges) do
+                    local p = Instance.new("Part", cubeModel)
+                    p.Size, p.Position, p.Anchored, p.CanCollide = d[1], centerPos + d[2], true, false
+                    p.Material, p.Color = Enum.Material.Neon, Color3.new(1,1,1)
+                    p.Transparency = 1 -- start invisible
+                    ts:Create(p, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Transparency = 0.2}):Play()
+                end
+                local rotSpeed = Vector3.new(math.random(-10,10)/2000, math.random(-10,10)/2000, math.random(-10,10)/2000)
+                table.insert(cubeTable, {model = cubeModel, pos = centerPos, speed = rotSpeed, angle = CFrame.Angles(0,0,0)})
+                task.wait() -- yield one frame per cube
             end
-            local rotSpeed = Vector3.new(math.random(-10, 10)/2000, math.random(-10, 10)/2000, math.random(-10, 10)/2000)
-            table.insert(cubeTable, {model = cubeModel, pos = centerPos, speed = rotSpeed, angle = CFrame.Angles(0,0,0)})
-        end
+        end)
     end
 
-    buildCubes(world, rotatingCubes)
-    buildCubes(worldV, rotatingCubesV)
+    -- Kick off async spawning for both viewports
+    buildGridAsync(world)
+    buildGridAsync(worldV)
+    buildCubesAsync(world, rotatingCubes)
+    buildCubesAsync(worldV, rotatingCubesV)
 
     local isActive = true
     local ts = game:GetService("TweenService")
@@ -423,13 +451,13 @@ btn.MouseButton1Click:Connect(function()
     local npcSyncCounter = 0
     local RunService = game:GetService("RunService")
     local renderConn
-    
+
     renderConn = RunService.RenderStepped:Connect(function()
         if not isActive then renderConn:Disconnect() return end
 
         npcSyncCounter = npcSyncCounter + 1
 
-        if npcSyncCounter % 3 == 0 and char then
+        if npcSyncCounter % 6 == 0 and char then
             for _, v in ipairs(char:GetDescendants()) do
                 if v:IsA("BasePart") and v.CanCollide then v.CanCollide = false end
             end
@@ -469,7 +497,7 @@ btn.MouseButton1Click:Connect(function()
             end
         end
 
-        if npcSyncCounter % 2 == 0 then
+        if npcSyncCounter % 4 == 0 then
             for real, model in pairs(fakeNPCs) do
                 if real and real.Parent and model then
                     syncPivot(model, real)
